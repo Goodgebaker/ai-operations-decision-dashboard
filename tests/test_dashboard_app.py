@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -12,6 +15,27 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class DashboardSmokeTests(unittest.TestCase):
+    def test_cloud_style_entrypoint_resolves_project_modules(self) -> None:
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+        env.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+
+        result = subprocess.run(
+            [sys.executable, "app.py"],
+            cwd=PROJECT_ROOT / "dashboard",
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+        self.assertEqual(
+            0,
+            result.returncode,
+            msg=(result.stderr or result.stdout)[-4000:],
+        )
+
     def test_all_six_modules_render_without_exception(self) -> None:
         expected_headings = {
             "运营总览": "运营总览",

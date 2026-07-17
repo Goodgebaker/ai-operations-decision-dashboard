@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+
+# Streamlit Community Cloud executes this file from the dashboard directory,
+# which does not automatically place the repository root on sys.path. Bootstrap
+# the root before importing the project's src package so local and cloud startup
+# use the same module resolution behavior.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import altair as alt
 import numpy as np
@@ -19,9 +29,6 @@ from src.interactive_risk_policy import (
 )
 from src.model_health_risk import RiskPolicy, build_diagnostic_evidence, build_health_risks
 from src.model_scoring import load_scoring_policy
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 PATHS = {
     "logs": PROJECT_ROOT / "data" / "synthetic_logs_v2.csv",

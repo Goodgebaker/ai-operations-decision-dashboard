@@ -10,6 +10,8 @@ ENTRYPOINT = PROJECT_ROOT / "dashboard" / "app.py"
 REQUIRED_FILES = (
     PROJECT_ROOT / "requirements.txt",
     PROJECT_ROOT / ".streamlit" / "config.toml",
+    PROJECT_ROOT / "src" / "__init__.py",
+    PROJECT_ROOT / "src" / "interactive_risk_policy.py",
     PROJECT_ROOT / "data" / "synthetic_logs_v2.csv",
     PROJECT_ROOT / "outputs" / "model_operating_scores.csv",
     PROJECT_ROOT / "outputs" / "model_operating_snapshot.csv",
@@ -58,4 +60,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
