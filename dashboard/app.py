@@ -9,6 +9,17 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from src.interactive_risk_policy import (
+    build_signal_events,
+    build_unknown_pattern_events,
+    merge_signal_rule_table,
+    risk_policy_mapping,
+    scoring_policy_with_risk_bands,
+    signal_rule_table,
+)
+from src.model_health_risk import RiskPolicy, build_diagnostic_evidence, build_health_risks
+from src.model_scoring import load_scoring_policy
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,6 +80,9 @@ ALGORITHM_OPTIONS = {
     "STL 周期残差": ("pred_stl", "score_stl"),
     "Isolation Forest": ("pred_isolation_forest", "score_isolation_forest"),
 }
+
+DEFAULT_RISK_BANDS = {"medium": 30.0, "high": 60.0, "critical": 80.0}
+DEFAULT_UNKNOWN_ALGORITHM_VOTES = 2
 
 
 st.set_page_config(
@@ -151,6 +165,13 @@ def load_all(_signature_value: tuple[int, ...]) -> dict[str, pd.DataFrame]:
     return data
 
 
+@st.cache_resource(show_spinner=False)
+def load_runtime_scoring_policy(_config_signature: int):
+    """加载风险重算所需的评分权重；配置文件变化时自动失效。"""
+    del _config_signature
+    return load_scoring_policy(PATHS["config"])
+
+
 def _date_filter(frame: pd.DataFrame, column: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
     if frame.empty or column not in frame:
         return frame.copy()
@@ -173,6 +194,24 @@ def _fmt_delta(current: float, previous: float, suffix: str = "") -> str | None:
     if pd.isna(previous):
         return None
     return f"{current - previous:+,.1f}{suffix}"
+
+
+def _confidence_band(score: float) -> str:
+    """将画像可信度转成便于阅读的展示档位，不改变底层评分。"""
+    if score >= 85:
+        return "高"
+    if score >= 70:
+        return "中"
+    return "低"
+
+
+def _performance_gap_label(gap: float) -> str:
+    """用自然语言说明主动拨测分与真实表现分的差异方向。"""
+    if pd.isna(gap) or abs(gap) < 0.05:
+        return "基本持平"
+    if gap > 0:
+        return f"拨测高 {gap:.1f} 分"
+    return f"真实高 {abs(gap):.1f} 分"
 
 
 def _line_chart(
@@ -488,14 +527,36 @@ def render_calibration(
         return
     model = st.selectbox("画像模型", sorted(profiles["model_id"].unique()), key="profile_model")
     profile = profiles[profiles["model_id"].eq(model)].sort_values("date").iloc[-1]
+
+    st.markdown("#### 路由决策摘要")
+    decision_score, decision_detail = st.columns([1, 2.2], gap="large", vertical_alignment="center")
+    with decision_score:
+        st.metric(
+            "综合路由评分",
+            f"{profile['routing_readiness_score']:.1f}",
+            help="能力 35% + 稳定性 20% + 性能 25% + 成本性能 20%。这是本页用于路由决策的主分。",
+            border=True,
+        )
+    with decision_detail:
+        with st.container(border=True):
+            st.markdown(f"**推荐角色：{profile['recommended_role']}**")
+            st.write(profile["routing_action"])
+            dominant = DIMENSION_LABELS.get(profile["dominant_capability"], profile["dominant_capability"])
+            weakest = DIMENSION_LABELS.get(profile["weakest_capability"], profile["weakest_capability"])
+            st.caption(f"优势能力：{dominant} · 相对弱项：{weakest}")
+
+    st.markdown("#### 评分构成")
     _metric_row([
         {"label": "能力评分", "value": f"{profile['capability_score']:.1f}", "help": "四类标准任务按指标字典权重汇总。"},
         {"label": "稳定性评分", "value": f"{profile['profile_stability_score']:.1f}", "help": "真实调用稳定性 60% + 标准任务重复一致性 40%。"},
         {"label": "性能评分", "value": f"{profile['profile_performance_score']:.1f}", "help": "真实调用性能 60% + 标准环境性能 40%。"},
-        {"label": "可信度评分", "value": f"{profile['confidence_score']:.1f}", "help": "任务覆盖、样本充分度、新鲜度和评测一致性的综合置信度。"},
-        {"label": "路由就绪度", "value": f"{profile['routing_readiness_score']:.1f}", "help": "能力 35% + 稳定性 20% + 性能 25% + 成本性能 20%。"},
-        {"label": "推荐角色", "value": profile["recommended_role"]},
     ])
+    confidence = float(profile["confidence_score"])
+    with st.container(border=True):
+        confidence_level = _confidence_band(confidence)
+        st.markdown(f"**证据可信度：{confidence_level}（{confidence:.1f}/100）**")
+        st.progress(confidence / 100)
+        st.caption("可信度衡量任务覆盖、样本充分度、数据新鲜度和评测一致性，只表示这份画像有多可靠，不代表模型能力高低。")
 
     st.markdown("#### 标准化测试任务")
     filtered_capability = capability[capability["model_id"].eq(model)].copy()
@@ -535,23 +596,68 @@ def render_calibration(
     st.markdown("#### 真实调用 vs 主动拨测融合诊断")
     st.caption("真实调用 = 用户行为 + 网络环境 + 平台状态 + 模型能力；主动拨测 = 固定输入 + 标准环境 + 模型能力。差异用于判断异常来源。")
     model_diagnosis = diagnosis[diagnosis["model_id"].eq(model)].sort_values("date", ascending=False)
-    st.dataframe(
-        model_diagnosis,
-        column_order=["date", "success_rate", "probe_http_success_rate", "p95_latency_ms", "probe_p95_latency_ms", "performance_gap_score", "diagnosis_reason", "switch_recommendation", "recommended_action"],
-        column_config={
-            "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD"),
-            "success_rate": st.column_config.NumberColumn("真实成功率", format="%.2f%%"),
-            "probe_http_success_rate": st.column_config.NumberColumn("拨测成功率", format="%.2f%%"),
-            "p95_latency_ms": st.column_config.NumberColumn("真实 P95", format="%,.0f ms"),
-            "probe_p95_latency_ms": st.column_config.NumberColumn("拨测 P95", format="%,.0f ms"),
-            "performance_gap_score": st.column_config.NumberColumn("性能分差", format="%.1f"),
-            "diagnosis_reason": "原因判断",
-            "switch_recommendation": "是否切换",
-            "recommended_action": "建议动作",
-        },
-        hide_index=True,
-        height=330,
-    )
+    if model_diagnosis.empty:
+        st.info("当前筛选范围没有该模型的融合诊断记录。")
+    else:
+        latest_diagnosis = model_diagnosis.iloc[0]
+        with st.container(border=True):
+            st.markdown(f"**最新诊断 · {latest_diagnosis['date']:%Y-%m-%d}**")
+            real_score, probe_score, gap_score = st.columns(3)
+            real_score.metric("真实表现指数", f"{latest_diagnosis['performance_score']:.1f}")
+            probe_score.metric("主动拨测指数", f"{latest_diagnosis['probe_performance_score']:.1f}")
+            gap_score.metric("表现差异", _performance_gap_label(latest_diagnosis["performance_gap_score"]))
+            st.markdown(f"**原因判断：** {latest_diagnosis['diagnosis_reason']}")
+            st.markdown(f"**切换判断：** {latest_diagnosis['switch_recommendation']}")
+            st.info(latest_diagnosis["recommended_action"], icon=":material/recommend:")
+
+        st.markdown("##### 近 7 次诊断轨迹")
+        diagnosis_summary = model_diagnosis.head(7).copy()
+        diagnosis_summary["表现差异"] = diagnosis_summary["performance_gap_score"].map(_performance_gap_label)
+        st.dataframe(
+            diagnosis_summary,
+            column_order=["date", "performance_score", "probe_performance_score", "表现差异", "diagnosis_reason", "switch_recommendation"],
+            column_config={
+                "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD"),
+                "performance_score": st.column_config.ProgressColumn("真实表现", min_value=0, max_value=100, format="%.1f"),
+                "probe_performance_score": st.column_config.ProgressColumn("主动拨测", min_value=0, max_value=100, format="%.1f"),
+                "表现差异": "差异",
+                "diagnosis_reason": "原因判断",
+                "switch_recommendation": "切换判断",
+            },
+            hide_index=True,
+            height=290,
+        )
+
+        with st.expander("查看原始诊断证据与完整数据"):
+            st.caption("以下字段用于复核诊断计算，默认折叠以避免干扰路由决策。")
+            st.dataframe(
+                model_diagnosis,
+                column_order=["date", "success_rate", "probe_http_success_rate", "p95_latency_ms", "probe_p95_latency_ms", "performance_score", "probe_performance_score", "performance_gap_score", "stability_score", "probe_consistency_score", "diagnosis_reason", "switch_recommendation", "recommended_action"],
+                column_config={
+                    "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD"),
+                    "success_rate": st.column_config.NumberColumn("真实成功率", format="%.2f%%"),
+                    "probe_http_success_rate": st.column_config.NumberColumn("拨测成功率", format="%.2f%%"),
+                    "p95_latency_ms": st.column_config.NumberColumn("真实 P95", format="%,.0f ms"),
+                    "probe_p95_latency_ms": st.column_config.NumberColumn("拨测 P95", format="%,.0f ms"),
+                    "performance_score": st.column_config.NumberColumn("真实性能分", format="%.1f"),
+                    "probe_performance_score": st.column_config.NumberColumn("拨测性能分", format="%.1f"),
+                    "performance_gap_score": st.column_config.NumberColumn("性能分差", format="%.1f"),
+                    "stability_score": st.column_config.NumberColumn("真实稳定性", format="%.1f"),
+                    "probe_consistency_score": st.column_config.NumberColumn("拨测一致性", format="%.1f"),
+                    "diagnosis_reason": "原因判断",
+                    "switch_recommendation": "切换判断",
+                    "recommended_action": "建议动作",
+                },
+                hide_index=True,
+                height=330,
+            )
+            st.download_button(
+                "下载完整融合诊断 CSV",
+                model_diagnosis.to_csv(index=False).encode("utf-8-sig"),
+                f"{model}_fusion_diagnosis.csv",
+                "text/csv",
+                icon=":material/download:",
+            )
 
     st.markdown("#### 多模型路由输入画像")
     st.dataframe(
@@ -594,30 +700,281 @@ def render_calibration(
             c2.download_button("下载拨测事件 CSV", probe_events.to_csv(index=False).encode("utf-8-sig"), "probe_alerts.csv", "text/csv", icon=":material/download:")
 
 
+def _active_detection_settings(
+    default_policy_values: dict[str, float],
+) -> tuple[dict[str, float], dict[str, float], int, bool]:
+    custom_policy = st.session_state.get("detection_policy_values")
+    policy_values = (
+        {key: float(value) for key, value in custom_policy.items()}
+        if custom_policy is not None
+        else default_policy_values.copy()
+    )
+    risk_bands = {
+        key: float(value)
+        for key, value in st.session_state.get("detection_risk_bands", DEFAULT_RISK_BANDS).items()
+    }
+    algorithm_votes = int(
+        st.session_state.get("detection_unknown_algorithm_votes", DEFAULT_UNKNOWN_ALGORITHM_VOTES)
+    )
+    return policy_values, risk_bands, algorithm_votes, custom_policy is not None
+
+
+def _render_detection_policy_editor(
+    default_policy_values: dict[str, float],
+    active_policy_values: dict[str, float],
+    risk_bands: dict[str, float],
+    algorithm_votes: int,
+    is_custom: bool,
+) -> None:
+    notice = st.session_state.pop("detection_policy_notice", None)
+    if notice:
+        st.success(str(notice), icon=":material/check_circle:")
+
+    with st.expander("检测策略配置", expanded=False):
+        st.caption("修改只作用于当前浏览器会话；指标字典仍是默认策略。应用后会用当前筛选区间回放风险和事件，不会改写仓库文件。")
+        if is_custom:
+            st.info("当前使用：会话自定义策略", icon=":material/edit_note:")
+        else:
+            st.info("当前使用：指标字典默认策略", icon=":material/verified:")
+
+        revision = int(st.session_state.setdefault("detection_policy_revision", 0))
+        with st.form(f"detection_policy_form_{revision}"):
+            st.markdown("##### 信号判断阈值")
+            edited_rules = st.data_editor(
+                signal_rule_table(active_policy_values),
+                key=f"detection_rule_editor_{revision}",
+                disabled=["检测信号", "风险维度", "触发方向", "单位"],
+                num_rows="fixed",
+                column_config={
+                    "检测信号": st.column_config.TextColumn("检测信号", pinned=True),
+                    "风险维度": "风险维度",
+                    "触发方向": "触发方向",
+                    "预警阈值": st.column_config.NumberColumn("预警阈值", min_value=0.0, format="%.2f"),
+                    "严重阈值": st.column_config.NumberColumn("严重阈值", min_value=0.0, format="%.2f"),
+                    "单位": "单位",
+                },
+                hide_index=True,
+            )
+
+            st.markdown("##### 基线与统计异常")
+            baseline_window_col, minimum_baseline_col, votes_col = st.columns(3)
+            baseline_window = baseline_window_col.number_input(
+                "基线窗口（天）",
+                min_value=1,
+                max_value=90,
+                value=int(active_policy_values["baseline_window_days"]),
+            )
+            minimum_baseline = minimum_baseline_col.number_input(
+                "最少历史天数",
+                min_value=1,
+                max_value=90,
+                value=int(active_policy_values["minimum_baseline_days"]),
+            )
+            unknown_votes = votes_col.number_input(
+                "未知异常最少一致算法数",
+                min_value=1,
+                max_value=3,
+                value=algorithm_votes,
+                help="MAD、STL、Isolation Forest 中至少多少个算法同时命中，才生成未知模式事件。",
+            )
+
+            st.markdown("##### 风险等级与路由动作")
+            medium_col, high_col, critical_col = st.columns(3)
+            medium_threshold = medium_col.number_input(
+                "中风险起点", min_value=1.0, max_value=97.0, value=risk_bands["medium"], step=1.0
+            )
+            high_threshold = high_col.number_input(
+                "高风险起点", min_value=2.0, max_value=98.0, value=risk_bands["high"], step=1.0
+            )
+            critical_threshold = critical_col.number_input(
+                "严重风险起点", min_value=3.0, max_value=99.0, value=risk_bands["critical"], step=1.0
+            )
+            evidence_col, downweight_col, switch_col, candidate_col = st.columns(4)
+            evidence_threshold = evidence_col.number_input(
+                "进入诊断中心", min_value=0.0, max_value=100.0,
+                value=float(active_policy_values["evidence_risk_threshold"]), step=1.0,
+            )
+            downweight_threshold = downweight_col.number_input(
+                "建议降权", min_value=0.0, max_value=100.0,
+                value=float(active_policy_values["route_downweight_risk_threshold"]), step=1.0,
+            )
+            switch_threshold = switch_col.number_input(
+                "建议切换", min_value=0.0, max_value=100.0,
+                value=float(active_policy_values["route_switch_risk_threshold"]), step=1.0,
+            )
+            candidate_health = candidate_col.number_input(
+                "候选模型最低健康分", min_value=0.0, max_value=100.0,
+                value=float(active_policy_values["minimum_candidate_health_score"]), step=1.0,
+            )
+
+            st.markdown("##### 高级：融合诊断风险下限")
+            model_floor_col, capability_floor_col, platform_floor_col, environment_floor_col = st.columns(4)
+            model_floor = model_floor_col.number_input(
+                "模型侧同步下降", min_value=0.0, max_value=100.0,
+                value=float(active_policy_values["model_side_risk_floor"]), step=1.0,
+            )
+            capability_floor = capability_floor_col.number_input(
+                "能力或拨测异常", min_value=0.0, max_value=100.0,
+                value=float(active_policy_values["capability_or_probe_risk_floor"]), step=1.0,
+            )
+            platform_floor = platform_floor_col.number_input(
+                "平台或流量异常", min_value=0.0, max_value=100.0,
+                value=float(active_policy_values["platform_or_traffic_risk_floor"]), step=1.0,
+            )
+            environment_floor = environment_floor_col.number_input(
+                "业务环境延迟差", min_value=0.0, max_value=100.0,
+                value=float(active_policy_values["environment_latency_risk_floor"]), step=1.0,
+            )
+            signal_floor_multiplier = st.number_input(
+                "单项严重信号保护系数",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(active_policy_values["single_component_floor_multiplier"]),
+                step=0.05,
+                help="最终风险不低于最高单项风险乘以该系数。",
+            )
+
+            submitted = st.form_submit_button(
+                "应用策略并回放", type="primary", icon=":material/play_arrow:"
+            )
+
+        if submitted:
+            try:
+                candidate = merge_signal_rule_table(active_policy_values, edited_rules)
+                candidate.update(
+                    {
+                        "baseline_window_days": float(baseline_window),
+                        "minimum_baseline_days": float(minimum_baseline),
+                        "evidence_risk_threshold": float(evidence_threshold),
+                        "route_downweight_risk_threshold": float(downweight_threshold),
+                        "route_switch_risk_threshold": float(switch_threshold),
+                        "minimum_candidate_health_score": float(candidate_health),
+                        "model_side_risk_floor": float(model_floor),
+                        "capability_or_probe_risk_floor": float(capability_floor),
+                        "platform_or_traffic_risk_floor": float(platform_floor),
+                        "environment_latency_risk_floor": float(environment_floor),
+                        "single_component_floor_multiplier": float(signal_floor_multiplier),
+                    }
+                )
+                RiskPolicy.from_mapping(candidate)
+                scoring_policy_with_risk_bands(
+                    load_runtime_scoring_policy(PATHS["config"].stat().st_mtime_ns),
+                    medium_threshold,
+                    high_threshold,
+                    critical_threshold,
+                )
+            except (TypeError, ValueError) as exc:
+                st.error(f"策略未应用：{exc}")
+            else:
+                st.session_state["detection_policy_values"] = candidate
+                st.session_state["detection_risk_bands"] = {
+                    "medium": float(medium_threshold),
+                    "high": float(high_threshold),
+                    "critical": float(critical_threshold),
+                }
+                st.session_state["detection_unknown_algorithm_votes"] = int(unknown_votes)
+                st.session_state["detection_policy_revision"] = revision + 1
+                st.session_state["detection_policy_notice"] = "自定义策略已应用，风险、事件和诊断证据已重新计算。"
+                st.rerun()
+
+        if st.button(
+            "恢复指标字典默认值",
+            key=f"reset_detection_policy_{revision}",
+            icon=":material/restore:",
+        ):
+            st.session_state.pop("detection_policy_values", None)
+            st.session_state.pop("detection_risk_bands", None)
+            st.session_state.pop("detection_unknown_algorithm_votes", None)
+            st.session_state["detection_policy_revision"] = revision + 1
+            st.session_state["detection_policy_notice"] = "已恢复指标字典默认策略。"
+            st.rerun()
+
+
 def render_detection(
     risks: pd.DataFrame,
     evidence: pd.DataFrame,
+    default_risks: pd.DataFrame,
     scores: pd.DataFrame,
     benchmark: pd.DataFrame,
     fusion_benchmark: pd.DataFrame,
     truth: pd.DataFrame,
+    default_policy_values: dict[str, float],
+    active_policy_values: dict[str, float],
+    risk_bands: dict[str, float],
+    algorithm_votes: int,
+    is_custom_policy: bool,
 ) -> None:
     _section(
         "智能检测",
-        "从异常报警升级为模型健康风险识别：分别量化性能下降、成功率异常和成本异常，并输出 0—100 风险评分。",
+        "从固定事件报警升级为可配置的模型健康风险识别：确定性阈值负责已知风险，统计模型补充发现未知模式。",
+    )
+    _render_detection_policy_editor(
+        default_policy_values,
+        active_policy_values,
+        risk_bands,
+        algorithm_votes,
+        is_custom_policy,
+    )
+
+    active_policy = RiskPolicy.from_mapping(active_policy_values)
+    default_policy = RiskPolicy.from_mapping(default_policy_values)
+    signal_events = build_signal_events(risks, active_policy)
+    unknown_events = build_unknown_pattern_events(scores, algorithm_votes)
+    dynamic_events = pd.concat([signal_events, unknown_events], ignore_index=True)
+    if not dynamic_events.empty:
+        dynamic_events = dynamic_events.sort_values(
+            ["event_time", "risk_score"], ascending=[False, False]
+        ).reset_index(drop=True)
+
+    default_events = pd.concat(
+        [
+            build_signal_events(default_risks, default_policy),
+            build_unknown_pattern_events(scores, DEFAULT_UNKNOWN_ALGORITHM_VOTES),
+        ],
+        ignore_index=True,
     )
     if risks.empty:
         st.info("当前筛选范围没有健康风险数据。")
         return
     highest = risks.sort_values("risk_score", ascending=False).iloc[0]
-    medium_plus = int(risks["risk_score"].ge(30).sum())
+    medium_plus = int(risks["risk_score"].ge(risk_bands["medium"]).sum())
     switch_count = int(evidence["switch_recommendation"].astype(str).str.contains("建议切换").sum()) if not evidence.empty else 0
     _metric_row([
         {"label": "最高风险分", "value": f"{highest['risk_score']:.1f}", "delta": f"{highest['risk_level']} · {highest['model_id']}", "delta_color": "inverse"},
         {"label": "中风险及以上", "value": medium_plus},
-        {"label": "诊断证据", "value": len(evidence)},
+        {"label": "动态风险事件", "value": len(dynamic_events)},
         {"label": "建议切换", "value": switch_count},
     ])
+    event_delta = len(dynamic_events) - len(default_events)
+    strategy_name = "会话自定义策略" if is_custom_policy else "指标字典默认策略"
+    st.caption(
+        f"当前使用：{strategy_name} · 相比默认策略事件数 {event_delta:+d} · "
+        f"未知模式事件 {len(unknown_events)} 条 · 诊断证据 {len(evidence)} 条"
+    )
+
+    st.markdown("#### 动态风险事件")
+    st.caption("风险维度保持稳定，具体事件由当前阈值和统计模型动态产生；同一天同一模型可以触发多个信号。")
+    if dynamic_events.empty:
+        st.success("当前策略下没有触发风险事件。", icon=":material/check_circle:")
+    else:
+        st.dataframe(
+            dynamic_events.head(50),
+            column_order=["event_time", "scope", "risk_dimension", "event_type", "severity", "detection_method", "risk_score", "observed_value", "threshold", "evidence"],
+            column_config={
+                "event_time": st.column_config.DatetimeColumn("时间", format="YYYY-MM-DD HH:mm"),
+                "scope": "影响范围",
+                "risk_dimension": "风险维度",
+                "event_type": "事件",
+                "severity": "等级",
+                "detection_method": "检测方式",
+                "risk_score": st.column_config.ProgressColumn("风险分", min_value=0, max_value=100, format="%.1f"),
+                "observed_value": "观测值",
+                "threshold": "当前阈值",
+                "evidence": "判断依据",
+            },
+            hide_index=True,
+            height=340,
+        )
 
     st.markdown("#### 模型健康风险趋势")
     chart = _line_chart(
@@ -629,7 +986,12 @@ def render_detection(
         [alt.Tooltip("date:T", title="日期", format="%Y-%m-%d"), alt.Tooltip("model_id:N", title="模型"), alt.Tooltip("risk_score:Q", title="风险分", format=".1f"), alt.Tooltip("risk_level:N", title="等级"), alt.Tooltip("primary_risk_driver_cn:N", title="主要驱动")],
         height=350,
     )
-    thresholds = pd.DataFrame({"risk_score": [30, 60, 80], "label": ["中风险", "高风险", "严重"]})
+    thresholds = pd.DataFrame(
+        {
+            "risk_score": [risk_bands["medium"], risk_bands["high"], risk_bands["critical"]],
+            "label": ["中风险", "高风险", "严重"],
+        }
+    )
     rules = alt.Chart(thresholds).mark_rule(strokeDash=[5, 4], opacity=.55).encode(y="risk_score:Q", color=alt.Color("label:N", title="风险阈值"))
     st.altair_chart(chart + rules, width="stretch")
 
@@ -888,8 +1250,7 @@ def main() -> None:
     logs = logs[logs["model_id"].isin(models) & logs["customer_id"].isin(customers)].copy()
     operating = _model_filter(_date_filter(data["operating"], "date", start, end), models)
     diagnosis = _model_filter(_date_filter(data["diagnosis"], "date", start, end), models)
-    risks = _model_filter(_date_filter(data["risks"], "date", start, end), models)
-    evidence = _model_filter(_date_filter(data["evidence"], "date", start, end), models)
+    default_risks = _model_filter(_date_filter(data["risks"], "date", start, end), models)
     profiles = _model_filter(data["profiles"], models)
     capability = _model_filter(data["capability"], models)
     probe_runs = _model_filter(_date_filter(data["probe_runs"], "started_at", start, end), models)
@@ -899,6 +1260,31 @@ def main() -> None:
     truth = data["truth"]
     if not truth.empty:
         truth = truth[(truth["start_time"] < end) & (truth["end_time"] >= start)].copy()
+
+    default_policy_values = risk_policy_mapping(data["risk_policy"])
+    active_policy_values, risk_bands, algorithm_votes, is_custom_policy = _active_detection_settings(
+        default_policy_values
+    )
+    active_risk_policy = RiskPolicy.from_mapping(active_policy_values)
+    scoring_policy = scoring_policy_with_risk_bands(
+        load_runtime_scoring_policy(PATHS["config"].stat().st_mtime_ns),
+        risk_bands["medium"],
+        risk_bands["high"],
+        risk_bands["critical"],
+    )
+    runtime_risks = build_health_risks(
+        _model_filter(data["operating"], models),
+        _model_filter(data["diagnosis"], models),
+        scoring_policy,
+        active_risk_policy,
+    )
+    runtime_evidence = build_diagnostic_evidence(
+        runtime_risks,
+        profiles,
+        active_risk_policy,
+    )
+    risks = _date_filter(runtime_risks, "date", start, end)
+    evidence = _date_filter(runtime_evidence, "date", start, end)
 
     st.title("AI 中台运营决策实验台")
     st.caption("真实调用 + 主动拨测 → 智能运营分析 → 模型能力画像 → 动态智能路由")
@@ -916,7 +1302,20 @@ def main() -> None:
     elif module == "能力校准":
         render_calibration(profiles, capability, diagnosis, probe_runs, probe_events)
     elif module == "智能检测":
-        render_detection(risks, evidence, scores, data["benchmark"], data["fusion_benchmark"], truth)
+        render_detection(
+            risks,
+            evidence,
+            default_risks,
+            scores,
+            data["benchmark"],
+            data["fusion_benchmark"],
+            truth,
+            default_policy_values,
+            active_policy_values,
+            risk_bands,
+            algorithm_votes,
+            is_custom_policy,
+        )
     else:
         render_diagnosis_center(evidence, fusion_alerts, probe_events, data)
 
