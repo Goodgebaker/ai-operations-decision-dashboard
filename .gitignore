@@ -1,0 +1,49 @@
+# macOS / editors
+.DS_Store
+**/.DS_Store
+.vscode/
+.idea/
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime noise
+*.log
+*.pid
+
+# Local agent/editor metadata
+.agents/
+.codex/
+
+# Temporary inspection and rendered artifacts
+.tmp_metric_dictionary/
+tmp/
+output/
+files/
+*.inspect.ndjson
+
+# Historical document-generation artifacts that are not used by the app
+outputs/019f5999-e136-76f2-a657-065c205ee2c2/
+outputs/first_experiment_report.html
+outputs/项目8_内部项目目标进度与计划.pptx
+outputs/项目8_内部项目目标进度与计划/
+

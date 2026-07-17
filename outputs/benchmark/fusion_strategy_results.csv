@@ -1,0 +1,4 @@
+﻿strategy_id,strategy_name_cn,alert_count,unique_alert_hours,true_positive_hours,false_positive_hours,false_negative_hours,precision,recall,f1,event_recall,false_alarms_per_day,critical_alerts,warning_alerts,info_alerts
+FUSION-BAL,均衡策略,6,6,6,0,5,1.0,0.5455,0.7059,1.0,0.0,4,2,0
+FUSION-HR,高召回策略,8,8,7,1,4,0.875,0.6364,0.7368,1.0,0.0333,5,3,0
+FUSION-HP,高精度策略,5,5,5,0,6,1.0,0.4545,0.625,0.8333,0.0,4,1,0

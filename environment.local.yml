@@ -1,0 +1,14 @@
+name: ai-monitor
+
+channels:
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -r requirements.txt
+
+variables:
+  ARROW_DEFAULT_MEMORY_POOL: system
+
