@@ -1,5 +1,9 @@
 # AI 中台运营决策实验台
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ai-operations-decision-dashboard-tukdtpg7om3vbegq35b3gt.streamlit.app/)
+
+在线体验：[AI 中台运营决策实验台](https://ai-operations-decision-dashboard-tukdtpg7om3vbegq35b3gt.streamlit.app/)
+
 这是一个面向多模型智能路由的运营决策原型：融合真实调用、主动可用性拨测和
 标准能力校准数据，形成模型运营评分、能力画像、健康风险、诊断解释与路由建议。
 原有复合规则、滚动 MAD、STL 和 Isolation Forest 异常检测能力继续保留。
