@@ -21,9 +21,21 @@ import numpy as np
 import pandas as pd
 
 try:
-    from .probe_runner import MODEL_LATENCY, MODEL_PRICE, PROVIDER_ENDPOINT_ENV
+    from .model_catalog import (
+        MODEL_LATENCY,
+        MODEL_PRICE,
+        PROVIDER_ENDPOINT_ENV,
+        SIMULATED_CAPABILITY,
+        load_observed_calibration,
+    )
 except ImportError:  # 支持 ``python src/capability_calibration.py`` 直接运行。
-    from probe_runner import MODEL_LATENCY, MODEL_PRICE, PROVIDER_ENDPOINT_ENV
+    from model_catalog import (
+        MODEL_LATENCY,
+        MODEL_PRICE,
+        PROVIDER_ENDPOINT_ENV,
+        SIMULATED_CAPABILITY,
+        load_observed_calibration,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -39,28 +51,6 @@ DIMENSION_LATENCY_FACTOR = {
     "reasoning": 1.20,
     "tool_call": 1.25,
 }
-SIMULATED_CAPABILITY = {
-    "gpt-4.1-mini": {
-        "instruction_following": 0.985,
-        "structured_output": 0.970,
-        "reasoning": 0.940,
-        "tool_call": 0.960,
-    },
-    "qwen-plus": {
-        "instruction_following": 0.970,
-        "structured_output": 0.950,
-        "reasoning": 0.920,
-        "tool_call": 0.900,
-    },
-    "deepseek-chat": {
-        "instruction_following": 0.960,
-        "structured_output": 0.930,
-        "reasoning": 0.970,
-        "tool_call": 0.920,
-    },
-}
-
-
 def _text(value: object) -> str:
     return "" if pd.isna(value) else str(value).strip()
 
@@ -273,6 +263,7 @@ def simulate_history(
                             timestamp + pd.Timedelta(seconds=repeat_index - 1),
                             repeat_index,
                             rng,
+                            start,
                         )
                     )
     frame = pd.DataFrame(rows).sort_values(
@@ -289,6 +280,7 @@ def _simulate_one(
     timestamp: pd.Timestamp,
     repeat_index: int,
     rng: np.random.Generator,
+    simulation_start: pd.Timestamp,
 ) -> dict[str, object]:
     ability = SIMULATED_CAPABILITY[target.model_id][task.capability_dimension]
     passed_latent = rng.random() < ability
@@ -296,16 +288,16 @@ def _simulate_one(
     error_type = ""
 
     provider_outage = (
-        pd.Timestamp("2026-06-20 10:00")
+        simulation_start + pd.Timedelta(days=19, hours=10)
         <= timestamp
-        <= pd.Timestamp("2026-06-20 11:59:59")
-        and target.provider == "Alibaba Cloud"
+        <= simulation_start + pd.Timedelta(days=19, hours=11, minutes=59, seconds=59)
+        and target.provider == "Qwen"
     )
     congestion = (
-        pd.Timestamp("2026-06-16 16:00")
+        simulation_start + pd.Timedelta(days=15, hours=16)
         <= timestamp
-        <= pd.Timestamp("2026-06-16 17:59:59")
-        and target.model_id == "gpt-4.1-mini"
+        <= simulation_start + pd.Timedelta(days=15, hours=17, minutes=59, seconds=59)
+        and target.model_id == "DeepSeek-V4"
     )
     transient = rng.random() < 0.001
     if provider_outage or transient:
@@ -365,6 +357,8 @@ def _simulate_one(
         ).hexdigest()[:16],
         "expected_output_version": task.expected_output_version,
         "traffic_type": "capability_probe",
+        "data_origin": "synthetic_assumption",
+        "cost_origin": "synthetic_assumption",
         "config_version": task.version,
     }
 
@@ -560,6 +554,8 @@ def run_live_task(
         ).hexdigest()[:16],
         "expected_output_version": task.expected_output_version,
         "traffic_type": "capability_probe",
+        "data_origin": "observed_probe",
+        "cost_origin": "synthetic_assumption",
         "config_version": task.version,
     }
 
@@ -570,15 +566,23 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--run-output", type=Path, default=DEFAULT_RUN_OUTPUT)
     parser.add_argument("--score-output", type=Path, default=DEFAULT_SCORE_OUTPUT)
-    parser.add_argument("--start", default="2026-06-01 00:00:00")
+    parser.add_argument("--start")
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--seed", type=int, default=20260716)
     args = parser.parse_args()
 
     tasks, targets = load_calibration_config(args.config)
     if args.mode == "simulate":
+        _, _, _, latest_observed = load_observed_calibration()
+        simulation_start = (
+            pd.Timestamp(args.start)
+            if args.start
+            else latest_observed.normalize() - pd.Timedelta(days=args.days - 1)
+            if latest_observed is not None
+            else pd.Timestamp("2026-06-01 00:00:00")
+        )
         runs = simulate_history(
-            tasks, targets, pd.Timestamp(args.start), args.days, args.seed
+            tasks, targets, simulation_start, args.days, args.seed
         )
     else:
         rows = [

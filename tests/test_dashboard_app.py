@@ -1,4 +1,4 @@
-"""Streamlit 六模块页面的最小回归测试。"""
+"""Streamlit 五个可见模块页面的最小回归测试。"""
 
 from __future__ import annotations
 
@@ -36,14 +36,13 @@ class DashboardSmokeTests(unittest.TestCase):
             msg=(result.stderr or result.stdout)[-4000:],
         )
 
-    def test_all_six_modules_render_without_exception(self) -> None:
+    def test_all_five_visible_modules_render_without_exception(self) -> None:
         expected_headings = {
             "运营总览": "运营总览",
             "性能诊断": "性能诊断",
             "成本分析": "成本分析",
             "能力校准": "主动拨测与模型能力校准",
-            "智能检测": "智能检测",
-            "诊断解释": "智能诊断解释中心",
+            "资源与容量诊断": "资源与容量诊断",
         }
         app = AppTest.from_file(
             str(PROJECT_ROOT / "dashboard" / "app.py"),
@@ -68,40 +67,35 @@ class DashboardSmokeTests(unittest.TestCase):
                         "查看原始诊断证据与完整数据",
                         [item.label for item in app.expander],
                     )
-                if module == "智能检测":
-                    self.assertIn(
-                        "检测策略配置",
-                        [item.label for item in app.expander],
-                    )
-                    self.assertIn(
-                        "动态风险事件",
-                        [item.label for item in app.metric],
-                    )
+                if module == "资源与容量诊断":
+                    self.assertIn("最新真实数据", [item.label for item in app.metric])
+                    self.assertIn("资源趋势指标", [item.label for item in app.segmented_control])
 
-    def test_detection_policy_can_be_applied_in_the_dashboard(self) -> None:
+    def test_hidden_modules_are_not_in_navigation(self) -> None:
         app = AppTest.from_file(
             str(PROJECT_ROOT / "dashboard" / "app.py"),
             default_timeout=30,
         ).run()
-        next(
-            button for button in app.sidebar.button if button.label == "智能检测"
-        ).click().run()
-        next(
-            item for item in app.number_input if item.label == "中风险起点"
-        ).set_value(25.0)
-        next(
-            button for button in app.button if button.label == "应用策略并回放"
-        ).click().run()
+        self.assertEqual([], list(app.exception))
+        labels = [button.label for button in app.sidebar.button]
+        self.assertNotIn("智能检测", labels)
+        self.assertNotIn("诊断解释", labels)
+        self.assertEqual(5, len([label for label in labels if label in {
+            "运营总览", "性能诊断", "成本分析", "能力校准", "资源与容量诊断"
+        }]))
+
+    def test_overview_exposes_decision_and_external_capacity_context(self) -> None:
+        app = AppTest.from_file(
+            str(PROJECT_ROOT / "dashboard" / "app.py"),
+            default_timeout=30,
+        ).run()
 
         self.assertEqual([], list(app.exception))
-        self.assertEqual(
-            25.0,
-            app.session_state["detection_risk_bands"]["medium"],
-        )
-        self.assertIn(
-            "自定义策略已应用，风险、事件和诊断证据已重新计算。",
-            [item.value for item in app.success],
-        )
+        self.assertIn("今日决策摘要", [item.value for item in app.subheader])
+        self.assertIn("外部容量基准", [item.value for item in app.subheader])
+        self.assertIn("观察窗口", [item.label for item in app.segmented_control])
+        self.assertIn("趋势指标", [item.label for item in app.segmented_control])
+        self.assertIn("最高稳定测试并发", [item.label for item in app.metric])
 
 
 if __name__ == "__main__":

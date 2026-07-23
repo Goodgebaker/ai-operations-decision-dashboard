@@ -1,0 +1,4 @@
+﻿date,model_id,instance_count,running_mean,running_max_busy,waiting_max_busy,concurrency_ratio,ttft_mean_ms,ttft_p95_ms,tokens_per_second_mean,cache_pct,npu_busy_pct,npu_mean,npu_p95,npu_max,npu_peak_average_mean,high_npu_samples,hbm_pct,hbm_headroom_pct,baseline_ready,capacity_state,diagnosis,data_origin,observed_days
+2026-07-21,DeepSeek-V4,6,0.6792,4,0,0.6667,4277.6072,8457.8,12.1737,0.0,18.73,2.8852,100.0,100,18.7317,24,95.66,4.34,False,容量风险,存在 NPU 高负载尖峰；平均 NPU 较低但 HBM 很高，更像模型驻留内存压力,observed,1
+2026-07-21,Minimax-M2.5,2,0.0306,2,0,1.0,412.6694,560.875,1.3087,47.84,27.7,1.4604,57.15,100,27.695,1,93.05,6.95,False,需要关注,忙时并发接近实例数量；平均 NPU 较低但 HBM 很高，更像模型驻留内存压力,observed,1
+2026-07-21,Qwen3.6-35B-A3B,2,0.0167,2,0,1.0,436.6129,851.4,0.4982,8.95,0.8,0.0424,0.0,22,0.8,0,92.98,7.02,False,需要关注,忙时并发接近实例数量；平均 NPU 较低但 HBM 很高，更像模型驻留内存压力,observed,1

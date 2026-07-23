@@ -14,20 +14,26 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+try:
+    from .model_catalog import (
+        MODEL_LATENCY,
+        MODEL_PRICE,
+        PROVIDER_ENDPOINT_ENV,
+        load_observed_calibration,
+    )
+except ImportError:  # 支持 ``python src/probe_runner.py`` 直接运行。
+    from model_catalog import (
+        MODEL_LATENCY,
+        MODEL_PRICE,
+        PROVIDER_ENDPOINT_ENV,
+        load_observed_calibration,
+    )
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = PROJECT_ROOT / "docs" / "ai_monitoring_metric_dictionary.xlsx"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "probe_runs.csv"
 DEFAULT_HOURLY = PROJECT_ROOT / "outputs" / "probe_hourly_metrics.csv"
-
-MODEL_LATENCY = {"gpt-4.1-mini": 1350, "qwen-plus": 1150, "deepseek-chat": 1050}
-MODEL_PRICE = {"gpt-4.1-mini": 0.0000024, "qwen-plus": 0.0000016, "deepseek-chat": 0.0000012}
-PROVIDER_ENDPOINT_ENV = {
-    "OpenAI": "PROBE_ENDPOINT_OPENAI",
-    "Alibaba Cloud": "PROBE_ENDPOINT_ALIBABA_CLOUD",
-    "DeepSeek": "PROBE_ENDPOINT_DEEPSEEK",
-}
-
 
 def _text(value: object) -> str:
     return "" if pd.isna(value) else str(value).strip()
@@ -147,6 +153,7 @@ def _base_simulated_result(
     config: ProbeConfig,
     timestamp: pd.Timestamp,
     rng: np.random.Generator,
+    simulation_start: pd.Timestamp,
 ) -> dict[str, object]:
     type_factor = {"availability": 0.78, "json_schema": 1.05, "stream_ttft": 0.92, "tool_call": 1.25}[config.probe_type]
     region_factor = {"cn-east": 1.0, "cn-north": 1.08, "cn-south": 1.12}[config.region]
@@ -165,15 +172,18 @@ def _base_simulated_result(
         function_name = "get_weather"
 
     congestion = (
-        pd.Timestamp("2026-06-16 16:00") <= timestamp <= pd.Timestamp("2026-06-16 17:59:59")
-        and config.model_id == "gpt-4.1-mini"
+        simulation_start + pd.Timedelta(days=15, hours=16) <= timestamp
+        <= simulation_start + pd.Timedelta(days=15, hours=17, minutes=59, seconds=59)
+        and config.model_id == "DeepSeek-V4"
     )
     outage = (
-        pd.Timestamp("2026-06-20 10:00") <= timestamp <= pd.Timestamp("2026-06-20 11:59:59")
-        and config.provider == "Alibaba Cloud"
+        simulation_start + pd.Timedelta(days=19, hours=10) <= timestamp
+        <= simulation_start + pd.Timedelta(days=19, hours=11, minutes=59, seconds=59)
+        and config.provider == "Qwen"
     )
     transient = (
-        pd.Timestamp("2026-06-10 04:00") <= timestamp <= pd.Timestamp("2026-06-10 04:29:59")
+        simulation_start + pd.Timedelta(days=9, hours=4) <= timestamp
+        <= simulation_start + pd.Timedelta(days=9, hours=4, minutes=29, seconds=59)
         and config.probe_id == "PROBE-006"
     )
     if congestion:
@@ -227,7 +237,7 @@ def simulate_history(
             start, end, freq=f"{config.interval_minutes}min", inclusive="left"
         ):
             run_number += 1
-            result = _base_simulated_result(config, timestamp, rng)
+            result = _base_simulated_result(config, timestamp, rng, start)
             assertion_passed, failed_assertions = evaluate_assertions(
                 config, assertions, result
             )
@@ -252,6 +262,8 @@ def simulate_history(
                     "failed_assertions": ";".join(failed_assertions),
                     "success": success,
                     "traffic_type": "probe",
+                    "data_origin": "synthetic_calibrated",
+                    "cost_origin": "synthetic_assumption",
                     "config_version": config.version,
                 }
             )
@@ -346,6 +358,8 @@ def run_live_probe(
         "failed_assertions": ";".join(failed),
         "success": status_code == config.expected_status and assertion_passed,
         "traffic_type": "probe",
+        "data_origin": "observed_probe",
+        "cost_origin": "synthetic_assumption",
         "config_version": config.version,
     }
 
@@ -382,15 +396,23 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--hourly-output", type=Path, default=DEFAULT_HOURLY)
-    parser.add_argument("--start", default="2026-06-01 00:00:00")
+    parser.add_argument("--start")
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--seed", type=int, default=20260715)
     args = parser.parse_args()
 
     configs, assertions = load_probe_config(args.config)
     if args.mode == "simulate":
+        _, _, _, latest_observed = load_observed_calibration()
+        simulation_start = (
+            pd.Timestamp(args.start)
+            if args.start
+            else latest_observed.normalize() - pd.Timedelta(days=args.days - 1)
+            if latest_observed is not None
+            else pd.Timestamp("2026-06-01 00:00:00")
+        )
         runs = simulate_history(
-            configs, assertions, pd.Timestamp(args.start), args.days, args.seed
+            configs, assertions, simulation_start, args.days, args.seed
         )
     else:
         rows = [run_live_probe(config, assertions) for config in configs]

@@ -1,0 +1,1415 @@
+{
+  "records": [
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-plus",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.33,
+      "speed": 243.37,
+      "per_speed": 24.337,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-plus",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 2.09,
+      "speed": 589.0,
+      "per_speed": 19.6333333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-plus",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 7.14,
+      "speed": 281.49,
+      "per_speed": 5.6298,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-plus",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 2.88,
+      "speed": 207.67,
+      "per_speed": 20.767,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-plus",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 8.89,
+      "speed": 243.75,
+      "per_speed": 8.125,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-plus",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 12.2,
+      "speed": 236.54,
+      "per_speed": 4.7308,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-plus",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 5.12,
+      "speed": 175.13,
+      "per_speed": 17.513,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-plus",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 15.58,
+      "speed": 323.46,
+      "per_speed": 10.782,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-plus",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 24.98,
+      "speed": 368.26,
+      "per_speed": 7.3652,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-max",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.26,
+      "speed": 165.0,
+      "per_speed": 16.5,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-max",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 2.09,
+      "speed": 589.0,
+      "per_speed": 19.6333333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-max",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 5.66,
+      "speed": 599.0,
+      "per_speed": 11.98,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-max",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 3.44,
+      "speed": 327.0,
+      "per_speed": 32.7,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-max",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 6.15,
+      "speed": 717.54,
+      "per_speed": 23.918,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-max",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 17.8,
+      "speed": 447.69,
+      "per_speed": 8.9538,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-max",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 5.39,
+      "speed": 250.54,
+      "per_speed": 25.054,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-max",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 13.07,
+      "speed": 469.43,
+      "per_speed": 15.6476666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.7-max",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 23.18,
+      "speed": 391.33,
+      "per_speed": 7.8266,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-plus",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.68,
+      "speed": 158.0,
+      "per_speed": 15.8,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-plus",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 2.38,
+      "speed": 303.87,
+      "per_speed": 10.129,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-plus",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 5.93,
+      "speed": 424.43,
+      "per_speed": 8.4886,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-plus",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 3.64,
+      "speed": 377.83,
+      "per_speed": 37.783,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-plus",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 6.6,
+      "speed": 496.17,
+      "per_speed": 16.539,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-plus",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 14.27,
+      "speed": 428.71,
+      "per_speed": 8.5742,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-plus",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 5.35,
+      "speed": 196.42,
+      "per_speed": 19.642,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-plus",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 10.6,
+      "speed": 502.19,
+      "per_speed": 16.7396666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-plus",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 20.59,
+      "speed": 311.2,
+      "per_speed": 6.224,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-flash",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 0.713,
+      "speed": 1092.18,
+      "per_speed": 109.218,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-flash",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 0.86,
+      "speed": 1755.25,
+      "per_speed": 58.5083333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-flash",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 0.75,
+      "speed": 2205.6,
+      "per_speed": 44.112,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-flash",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 2.764,
+      "speed": 1308.34,
+      "per_speed": 130.834,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-flash",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 1.78,
+      "speed": 2233.11,
+      "per_speed": 74.437,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-flash",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 4.59,
+      "speed": 2091.27,
+      "per_speed": 41.8254,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-flash",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 3.04,
+      "speed": 665.72,
+      "per_speed": 66.572,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-flash",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 3.99,
+      "speed": 1296.49,
+      "per_speed": 43.2163333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "qwen3.6-flash",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 5.77,
+      "speed": 1021.41,
+      "per_speed": 20.4282,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "deepseek-v4-pro",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.63,
+      "speed": 112.84,
+      "per_speed": 11.284,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "deepseek-v4-pro",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 1.7,
+      "speed": 217.6,
+      "per_speed": 7.25333333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "deepseek-v4-pro",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 1.98,
+      "speed": 195.06,
+      "per_speed": 3.9012,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "deepseek-v4-pro",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 3.43,
+      "speed": 220.22,
+      "per_speed": 22.022,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "deepseek-v4-pro",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 3.04,
+      "speed": 294.14,
+      "per_speed": 9.80466666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "deepseek-v4-pro",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "deepseek-v4-pro",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 4.54,
+      "speed": 194.75,
+      "per_speed": 19.475,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "deepseek-v4-pro",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 4.542,
+      "speed": 310.63,
+      "per_speed": 10.3543333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "deepseek-v4-pro",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "glm-5.1",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 2.12,
+      "speed": 222.62,
+      "per_speed": 22.262,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "glm-5.1",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "glm-5.1",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "glm-5.1",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "glm-5.1",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "glm-5.1",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "glm-5.1",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "glm-5.1",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "glm-5.1",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": null,
+      "speed": null,
+      "per_speed": null,
+      "rate_limited": true
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "kimi-k2.6",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 2.87,
+      "speed": 205.9,
+      "per_speed": 20.59,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "kimi-k2.6",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 2.31,
+      "speed": 533.6,
+      "per_speed": 17.7866666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "kimi-k2.6",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 6.85,
+      "speed": 510.14,
+      "per_speed": 10.2028,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "kimi-k2.6",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 3.63,
+      "speed": 218.68,
+      "per_speed": 21.868,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "kimi-k2.6",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 7.6,
+      "speed": 393.49,
+      "per_speed": 13.1163333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "kimi-k2.6",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 15.9,
+      "speed": 360.68,
+      "per_speed": 7.2136,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "kimi-k2.6",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 5.75,
+      "speed": 200.66,
+      "per_speed": 20.066,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "kimi-k2.6",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 12.46,
+      "speed": 227.36,
+      "per_speed": 7.57866666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "阿里百炼",
+      "model": "kimi-k2.6",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 26.39,
+      "speed": 134.24,
+      "per_speed": 2.6848,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "GLM-5.2",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.82,
+      "speed": 350.01,
+      "per_speed": 35.001,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "GLM-5.2",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 1.59,
+      "speed": 1084.6,
+      "per_speed": 36.1533333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "GLM-5.2",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 6.6,
+      "speed": 1139.0,
+      "per_speed": 22.78,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "GLM-5.2",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 2.96,
+      "speed": 318.46,
+      "per_speed": 31.846,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "GLM-5.2",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 3.41,
+      "speed": 630.3,
+      "per_speed": 21.01,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "GLM-5.2",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 3.43,
+      "speed": 640.8,
+      "per_speed": 12.816,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "GLM-5.2",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 4.71,
+      "speed": 189.07,
+      "per_speed": 18.907,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "GLM-5.2",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 4.85,
+      "speed": 308.7,
+      "per_speed": 10.29,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "GLM-5.2",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 5.15,
+      "speed": 384.7,
+      "per_speed": 7.694,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "MiniMax-M3",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.94,
+      "speed": 324.91,
+      "per_speed": 32.491,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "MiniMax-M3",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 2.1,
+      "speed": 844.91,
+      "per_speed": 28.1636666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "MiniMax-M3",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 6.8,
+      "speed": 278.0,
+      "per_speed": 5.56,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "MiniMax-M3",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 2.53,
+      "speed": 381.1,
+      "per_speed": 38.11,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "MiniMax-M3",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 2.97,
+      "speed": 714.79,
+      "per_speed": 23.8263333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "MiniMax-M3",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 17.9,
+      "speed": 138.0,
+      "per_speed": 2.76,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "MiniMax-M3",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 3.58,
+      "speed": 306.17,
+      "per_speed": 30.617,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "MiniMax-M3",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 16.2,
+      "speed": 75.0,
+      "per_speed": 2.5,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "MiniMax-M3",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 35.9,
+      "speed": 104.0,
+      "per_speed": 2.08,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "HY3",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.5,
+      "speed": 255.0,
+      "per_speed": 25.5,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "HY3",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 3.5,
+      "speed": 522.0,
+      "per_speed": 17.4,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "HY3",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 3.8,
+      "speed": 172.0,
+      "per_speed": 3.44,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "HY3",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 4.1,
+      "speed": 154.0,
+      "per_speed": 15.4,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "HY3",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 7.5,
+      "speed": 237.0,
+      "per_speed": 7.9,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "HY3",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 10.6,
+      "speed": 87.0,
+      "per_speed": 1.74,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "HY3",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 13.05,
+      "speed": 45.0,
+      "per_speed": 4.5,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "HY3",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 21.6,
+      "speed": 26.0,
+      "per_speed": 0.866666666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "HY3",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 39.08,
+      "speed": 52.0,
+      "per_speed": 1.04,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "Kimi-K2.7-Code",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 2.4,
+      "speed": 239.0,
+      "per_speed": 23.9,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "Kimi-K2.7-Code",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 2.4,
+      "speed": 673.0,
+      "per_speed": 22.4333333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "Kimi-K2.7-Code",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 3.5,
+      "speed": 621.0,
+      "per_speed": 12.42,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "Kimi-K2.7-Code",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 4.1,
+      "speed": 261.0,
+      "per_speed": 26.1,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "Kimi-K2.7-Code",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 4.97,
+      "speed": 316.0,
+      "per_speed": 10.5333333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "Kimi-K2.7-Code",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 4.9,
+      "speed": 603.0,
+      "per_speed": 12.06,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "Kimi-K2.7-Code",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 6.2,
+      "speed": 233.0,
+      "per_speed": 23.3,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "Kimi-K2.7-Code",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 6.6,
+      "speed": 306.0,
+      "per_speed": 10.2,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "Kimi-K2.7-Code",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 9.8,
+      "speed": 311.0,
+      "per_speed": 6.22,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "DeepSeek-V4-Pro",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.7,
+      "speed": 317.0,
+      "per_speed": 31.7,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "DeepSeek-V4-Pro",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 3.2,
+      "speed": 827.0,
+      "per_speed": 27.5666666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "DeepSeek-V4-Pro",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 7.8,
+      "speed": 1066.0,
+      "per_speed": 21.32,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "DeepSeek-V4-Pro",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 3.03,
+      "speed": 309.0,
+      "per_speed": 30.9,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "DeepSeek-V4-Pro",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 7.0,
+      "speed": 579.0,
+      "per_speed": 19.3,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "DeepSeek-V4-Pro",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 10.3,
+      "speed": 582.0,
+      "per_speed": 11.64,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "DeepSeek-V4-Pro",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 5.3,
+      "speed": 216.0,
+      "per_speed": 21.6,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "DeepSeek-V4-Pro",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 10.3,
+      "speed": 270.0,
+      "per_speed": 9.0,
+      "rate_limited": false
+    },
+    {
+      "vendor": "腾讯",
+      "model": "DeepSeek-V4-Pro",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 14.2,
+      "speed": 102.0,
+      "per_speed": 2.04,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.98,
+      "speed": 468.0,
+      "per_speed": 46.8,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 3.47,
+      "speed": 809.0,
+      "per_speed": 26.9666666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 5.4,
+      "speed": 831.0,
+      "per_speed": 16.62,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "6k/1k",
+      "concurrency": 80,
+      "ttft": 8.2,
+      "speed": 1150.0,
+      "per_speed": 14.375,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 3.19,
+      "speed": 322.0,
+      "per_speed": 32.2,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 6.02,
+      "speed": 505.0,
+      "per_speed": 16.8333333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 10.4,
+      "speed": 501.89,
+      "per_speed": 10.0378,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 5.6,
+      "speed": 258.0,
+      "per_speed": 25.8,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 10.8,
+      "speed": 396.0,
+      "per_speed": 13.2,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M3",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 15.1,
+      "speed": 230.0,
+      "per_speed": 4.6,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.29,
+      "speed": 451.0,
+      "per_speed": 45.1,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 2.24,
+      "speed": 1123.0,
+      "per_speed": 37.4333333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 4.42,
+      "speed": 1224.0,
+      "per_speed": 24.48,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "6k/1k",
+      "concurrency": 80,
+      "ttft": 6.0,
+      "speed": 1626.0,
+      "per_speed": 20.325,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 2.37,
+      "speed": 384.0,
+      "per_speed": 38.4,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 5.59,
+      "speed": 730.0,
+      "per_speed": 24.3333333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 10.37,
+      "speed": 683.0,
+      "per_speed": 13.66,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 4.38,
+      "speed": 283.0,
+      "per_speed": 28.3,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 9.45,
+      "speed": 437.0,
+      "per_speed": 14.5666666666667,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7-highspeed",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 12.03,
+      "speed": 354.0,
+      "per_speed": 7.08,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "6k/1k",
+      "concurrency": 10,
+      "ttft": 1.5,
+      "speed": 355.0,
+      "per_speed": 35.5,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "6k/1k",
+      "concurrency": 30,
+      "ttft": 2.0,
+      "speed": 874.0,
+      "per_speed": 29.1333333333333,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "6k/1k",
+      "concurrency": 50,
+      "ttft": 3.2,
+      "speed": 1192.0,
+      "per_speed": 23.84,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "6k/1k",
+      "concurrency": 80,
+      "ttft": 6.4,
+      "speed": 1150.0,
+      "per_speed": 14.375,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "16k/1k",
+      "concurrency": 10,
+      "ttft": 3.7,
+      "speed": 288.0,
+      "per_speed": 28.8,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "16k/1k",
+      "concurrency": 30,
+      "ttft": 5.4,
+      "speed": 642.0,
+      "per_speed": 21.4,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "16k/1k",
+      "concurrency": 50,
+      "ttft": 7.3,
+      "speed": 546.0,
+      "per_speed": 10.92,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "32k/1k",
+      "concurrency": 10,
+      "ttft": 6.0,
+      "speed": 230.0,
+      "per_speed": 23.0,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "32k/1k",
+      "concurrency": 30,
+      "ttft": 11.4,
+      "speed": 321.0,
+      "per_speed": 10.7,
+      "rate_limited": false
+    },
+    {
+      "vendor": "Minimax",
+      "model": "MiniMax-M2.7",
+      "io": "32k/1k",
+      "concurrency": 50,
+      "ttft": 16.3,
+      "speed": 258.0,
+      "per_speed": 5.16,
+      "rate_limited": false
+    }
+  ],
+  "summary": {
+    "total": 138,
+    "rate_limited": 10,
+    "valid": 128,
+    "vendors": [
+      "腾讯",
+      "Minimax",
+      "阿里百炼"
+    ],
+    "models": [
+      "GLM-5.2",
+      "MiniMax-M2.7-highspeed",
+      "MiniMax-M3",
+      "qwen3.6-flash",
+      "HY3",
+      "kimi-k2.6",
+      "MiniMax-M2.7",
+      "qwen3.6-plus",
+      "DeepSeek-V4-Pro",
+      "deepseek-v4-pro",
+      "Kimi-K2.7-Code",
+      "qwen3.7-max",
+      "glm-5.1",
+      "qwen3.7-plus"
+    ],
+    "io_levels": [
+      "32k/1k",
+      "6k/1k",
+      "16k/1k"
+    ]
+  }
+}

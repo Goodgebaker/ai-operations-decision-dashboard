@@ -1,5 +1,5 @@
 ﻿probe_alert_id,detected_at,base_severity,alert_level,breach_ratio,severity_score,event_type,probe_id,probe_name_cn,provider,model_id,region,title,content,consecutive_failures,failed_probes,recommended_action,alert_state
-PALERT-00001,2026-06-16 16:00:00,critical,critical,2.0,1.35,correlated_failure,MULTI,多探针相关故障,OpenAI,multiple,multiple,OpenAI 多个主动探针同时失败,失败探针：PROBE-001;PROBE-004,3,PROBE-001;PROBE-004,结合真实业务错误率和路由状态确认故障，必要时切换供应商,open
-PALERT-00002,2026-06-16 18:00:00,recovery,recovery,0.0,0.0,recovery,MULTI,多探针恢复,OpenAI,multiple,multiple,OpenAI 主动拨测恢复,多个探针已恢复正常,0,PROBE-001;PROBE-004,继续观察两个拨测周期，并确认真实业务指标同步恢复,recovered
-PALERT-00003,2026-06-20 10:00:00,critical,critical,2.0,1.35,correlated_failure,MULTI,多探针相关故障,Alibaba Cloud,multiple,multiple,Alibaba Cloud 多个主动探针同时失败,失败探针：PROBE-002;PROBE-005,3,PROBE-002;PROBE-005,结合真实业务错误率和路由状态确认故障，必要时切换供应商,open
-PALERT-00004,2026-06-20 12:15:00,recovery,recovery,0.0,0.0,recovery,MULTI,多探针恢复,Alibaba Cloud,multiple,multiple,Alibaba Cloud 主动拨测恢复,多个探针已恢复正常,0,PROBE-002;PROBE-005,继续观察两个拨测周期，并确认真实业务指标同步恢复,recovered
+PALERT-00001,2026-07-07 16:00:00,critical,critical,2.0,1.35,correlated_failure,MULTI,多探针相关故障,DeepSeek,multiple,multiple,DeepSeek 多个主动探针同时失败,失败探针：PROBE-003;PROBE-006,3,PROBE-003;PROBE-006,结合真实业务错误率和路由状态确认故障，必要时切换供应商,open
+PALERT-00002,2026-07-07 18:00:00,recovery,recovery,0.0,0.0,recovery,MULTI,多探针恢复,DeepSeek,multiple,multiple,DeepSeek 主动拨测恢复,多个探针已恢复正常,0,PROBE-003;PROBE-006,继续观察两个拨测周期，并确认真实业务指标同步恢复,recovered
+PALERT-00003,2026-07-11 10:00:00,critical,critical,2.0,1.35,correlated_failure,MULTI,多探针相关故障,Qwen,multiple,multiple,Qwen 多个主动探针同时失败,失败探针：PROBE-002;PROBE-005,3,PROBE-002;PROBE-005,结合真实业务错误率和路由状态确认故障，必要时切换供应商,open
+PALERT-00004,2026-07-11 12:15:00,recovery,recovery,0.0,0.0,recovery,MULTI,多探针恢复,Qwen,multiple,multiple,Qwen 主动拨测恢复,多个探针已恢复正常,0,PROBE-002;PROBE-005,继续观察两个拨测周期，并确认真实业务指标同步恢复,recovered

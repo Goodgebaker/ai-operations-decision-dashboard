@@ -15,6 +15,7 @@ __pycache__/
 htmlcov/
 .venv/
 venv/
+.python311/
 
 # Local credentials and environment overrides
 .env
@@ -41,9 +42,18 @@ output/
 files/
 *.inspect.ndjson
 
+# Private daily resource workbooks and instance anonymization material
+newdata/**/*.xlsx
+newdata/archive/
+newdata/.instance_salt
+!newdata/01_每日三份Excel放这里/README.txt
+newdata/*.html
+newdata/analyze_model_test.py
+newdata/dashboard_data.json
+newdata/parse_sheet.py
+
 # Historical document-generation artifacts that are not used by the app
 outputs/019f5999-e136-76f2-a657-065c205ee2c2/
 outputs/first_experiment_report.html
 outputs/项目8_内部项目目标进度与计划.pptx
 outputs/项目8_内部项目目标进度与计划/
-

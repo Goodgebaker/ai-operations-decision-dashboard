@@ -4,11 +4,13 @@
 
 在线体验：[AI 中台运营决策实验台](https://ai-operations-decision-dashboard-tukdtpg7om3vbegq35b3gt.streamlit.app/)
 
-这是一个面向多模型智能路由的运营决策原型：融合真实调用、主动可用性拨测和
-标准能力校准数据，形成模型运营评分、能力画像、健康风险、诊断解释与路由建议。
+这是一个面向多模型智能路由的运营决策原型：使用真实资源观测校准模拟调用、
+主动可用性拨测和标准能力数据，形成模型运营评分、能力画像、资源容量诊断、
+健康风险与路由建议。
 原有复合规则、滚动 MAD、STL 和 Isolation Forest 异常检测能力继续保留。
 
-项目内置的是可公开展示的模拟数据与预计算结果，不包含生产凭据。看板入口为
+项目内置的是可公开展示的模拟数据、脱敏真实资源汇总与预计算结果，不包含生产
+凭据或原始实例 IP。看板入口为
 `dashboard/app.py`，支持从项目根目录本地运行，也可直接部署到 Streamlit
 Community Cloud。
 
@@ -70,6 +72,10 @@ Python 与 GitHub Actions 依赖更新。
 API Key 不得写入仓库；实拨所需变量名可以参考 `.env.example`，真实值应由运行
 环境的 Secrets 或环境变量管理。
 
+当前在运模型统一为 `DeepSeek-V4`、`Minimax-M2.5` 和
+`Qwen3.6-35B-A3B`。来源工作簿中的“中台模型”不属于本项目需要监控的商用
+模型，因此导入时会校验但不会进入看板。
+
 ## 在 VS Code 中运行
 
 先打开项目文件夹，在 VS Code 右下角选择 `ai-monitor` Python 环境。随后打开“终端 → 新建终端”，确认终端前缀是 `(ai-monitor)`。
@@ -100,6 +106,43 @@ streamlit run dashboard/app.py
 ```bash
 ./scripts/rebuild_demo.sh
 ```
+
+## 每日真实资源数据更新
+
+每天收到三份 Excel 后，将它们放入：
+
+```text
+newdata/01_每日三份Excel放这里/
+```
+
+随后在 Windows 中双击项目根目录的 `更新每日数据.bat`。程序会自动识别同一
+日期的“中间明细、忙时对比、NPU 统计”三份文件，校验口径、排除中台模型、
+匿名化实例/IP、追加历史数据，并重建全部模拟数据和看板产物。成功处理的原始
+文件会移入本地 `newdata/archive/YYYYMMDD/`，两个目录中的 Excel 和本地匿名盐
+均不会进入 Git。
+
+需要在终端中执行时使用：
+
+```bash
+python scripts/update_daily_data.py
+```
+
+真实数据只负责模型并发、等待、TTFT、服务吞吐、NPU、Cache 和 HBM；调用量、
+请求成功率、金额成本和能力得分仍是演示用模拟数据。页面会分别标记“真实观测”、
+“真实基线校准模拟”和“模拟假设”，避免混淆。
+
+外部模型压测使用独立数据链路，不会混入生产日志或主动拨测。收到新版来源 JSON
+后，可重新生成看板使用的标准化容量基准：
+
+```bash
+python -m src.external_benchmarks \
+  --input newdata/model_test_data.json \
+  --output data/external_model_benchmarks.csv
+```
+
+标准表保留供应商、模型、输入输出档位、并发、首字延迟、总吞吐和 429 观测，
+并明确标记来源缺少逐次原始记录、重复次数和聚合方法，因此只用于候选模型容量
+参考，不直接参与现有健康评分。
 
 也可以使用推荐的安全启动入口：
 
@@ -180,7 +223,13 @@ streamlit run dashboard/app.py
 - `outputs/probe_hourly_metrics.csv`：拨测可用率与延迟的小时聚合结果。
 - `outputs/probe_alerts.csv`：连续失败、关联故障与恢复事件。
 - `data/capability_probe_runs.csv`：标准任务 × 模型的对称能力校准明细。
+- `data/external_model_benchmarks.csv`：由外部真实压测汇总标准化得到的候选模型容量基准。
+- `data/resource_model_timeseries.csv`：脱敏后的真实模型两分钟资源与性能时序。
+- `data/resource_instance_hourly.csv`：不含原始 IP 的匿名实例小时 NPU 汇总。
 - `outputs/model_capability_scores.csv`：模型在四个能力维度上的质量、稳定性和性能统计。
+- `src/external_benchmarks.py`：外部压测标准化、质量校验和容量画像生成器。
+- `src/resource_capacity.py`：每日三表校验、模型级去重、实例脱敏和容量诊断。
+- `src/model_catalog.py`：三个在运模型的统一名称、模拟价格和校准参数。
 - `src/capability_calibration.py`：能力任务加载、规则评测、对称拨测与维度评分运行器。
 - `outputs/model_operating_scores.csv`：真实调用侧的模型日级运营指标和配置化评分。
 - `outputs/model_operating_snapshot.csv`：每个模型最新健康指数、等级和排行。
@@ -190,17 +239,19 @@ streamlit run dashboard/app.py
 - `src/model_profile.py`：控制变量融合诊断、画像评分和路由角色建议。
 - `outputs/model_health_risks.csv`：模型日级性能、成功率、成本风险与融合风险评分。
 - `outputs/model_diagnostic_evidence.csv`：异常解释、原因、切换建议、替代模型和证据摘要。
+- `outputs/resource_capacity_daily.csv`：真实资源日级容量状态、余量和诊断结论。
 - `src/model_health_risk.py`：健康风险识别、单项保护、诊断解释和替代路由决策引擎。
 - `dashboard/app.py`：Streamlit 实验看板。
 
 ## 决策看板模块
 
-看板按决策链路组织为六个模块：运营总览输出模型健康排行；性能诊断展示
+看板显示五个模块：运营总览先输出今日决策摘要、模型健康排行和外部候选模型
+容量参考；性能诊断展示
 P50/P95/P99、延迟波动和性能评分；成本分析展示单请求成本、Token 成本、
 成本趋势和成本性能评分；能力校准融合标准任务与真实调用差异并
-输出路由画像；智能检测输出性能、成功率和成本健康风险；诊断解释中心说明
-异常、可能原因、模型切换判断和推荐动作。原有异常检测算法对比、可用性拨测、
-融合告警和规则配置保留在相应模块的实验或原始证据区域中。
+输出路由画像；资源与容量诊断展示真实并发、等待、TTFT、吞吐、匿名实例 NPU、
+Cache、HBM 余量和容量结论。“智能检测”和“诊断解释”不再显示在导航中，但其
+算法源码、测试和后台产物继续保留，便于后续恢复。
 
 ## 模型运营评分配置
 

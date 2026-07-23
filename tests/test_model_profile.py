@@ -169,7 +169,7 @@ class ProfileIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(profiles["profile_rank"].tolist(), [1, 2, 3])
         qwen_role = profiles.loc[
-            profiles["model_id"].eq("qwen-plus"), "recommended_role"
+            profiles["model_id"].eq("Qwen3.6-35B-A3B"), "recommended_role"
         ].iloc[0]
         self.assertEqual(qwen_role, "辅助路由候选")
         self.assertEqual(

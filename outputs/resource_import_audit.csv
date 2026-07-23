@@ -1,0 +1,2 @@
+﻿source_date,detail_file,busy_file,npu_file,source_checksum,model_timeseries_rows,instance_hourly_rows,capacity_rows,excluded_platform_rows,status
+2026-07-21,模型性能中间明细_20260721.xlsx,模型性能忙时对比_20260721.xlsx,NPU中间统计表_20260721.xlsx,434346600062f0cc4ba06155788311f1a6250d5ef2997482078cadab9e2aac02,2160,240,3,5760,success

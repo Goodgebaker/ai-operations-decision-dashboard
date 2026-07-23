@@ -8,6 +8,8 @@ source "$PROJECT_ROOT/scripts/resolve_python.sh"
 
 export ARROW_DEFAULT_MEMORY_POOL="${ARROW_DEFAULT_MEMORY_POOL:-system}"
 
+"$PYTHON_BIN" src/generate_sample_data.py
+"$PYTHON_BIN" src/calculate_metrics.py
 "$PYTHON_BIN" src/generate_synthetic_v2.py
 "$PYTHON_BIN" src/build_features.py
 "$PYTHON_BIN" src/composite_rule_engine.py

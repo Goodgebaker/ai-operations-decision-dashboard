@@ -89,9 +89,9 @@ class SymmetricMatrixTests(unittest.TestCase):
             task("T4", "tool_call", "tool_name", "get_weather"),
         ]
         self.targets = [
-            ModelTarget("gpt-4.1-mini", "OpenAI", "cn-east", "KEY1"),
-            ModelTarget("qwen-plus", "Alibaba Cloud", "cn-east", "KEY2"),
-            ModelTarget("deepseek-chat", "DeepSeek", "cn-east", "KEY3"),
+            ModelTarget("Minimax-M2.5", "MiniMax", "cn-east", "KEY1"),
+            ModelTarget("Qwen3.6-35B-A3B", "Qwen", "cn-east", "KEY2"),
+            ModelTarget("DeepSeek-V4", "DeepSeek", "cn-east", "KEY3"),
         ]
 
     def test_simulation_is_deterministic_and_balanced(self) -> None:
@@ -140,6 +140,10 @@ class WorkbookConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(len(tasks), 4)
         self.assertEqual(len(targets), 3)
+        self.assertEqual(
+            {target.model_id for target in targets},
+            {"DeepSeek-V4", "Minimax-M2.5", "Qwen3.6-35B-A3B"},
+        )
         self.assertTrue(all(task.version == "0.7.0" for task in tasks))
 
 

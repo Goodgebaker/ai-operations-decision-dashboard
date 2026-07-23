@@ -1,7 +1,7 @@
 anomaly_id,anomaly_type,start_time,end_time,entity_type,entity_value,severity,affected_metrics,evaluation_granularity,description
-GT-001,key_leak_suspected,2026-06-12 03:15:00,2026-06-12 03:24:59,api_key,key_c007_2,critical,request_count;distinct_ip_count;new_ip_ratio;off_hours,minute,非工作时间内单Key从大量新IP高频调用
-GT-002,model_congestion,2026-06-16 16:00:00,2026-06-16 17:59:59,model,gpt-4.1-mini,critical,p95_latency_ms;queue_p95_ms;error_rate,hour,模型队列和响应时延同时升高并伴随部分503
-GT-003,provider_outage,2026-06-20 10:00:00,2026-06-20 11:59:59,provider,Alibaba Cloud,critical,error_rate;server_error_rate;p95_latency_ms,hour,单一供应商大面积503，其他供应商相对正常
-GT-004,token_spike,2026-06-24 14:00:00,2026-06-24 15:59:59,customer,C003,warning,total_tokens;tokens_per_request;estimated_cost,hour,客户单次请求Token显著上升并带来成本突增
-GT-005,customer_error_burst,2026-06-27 09:00:00,2026-06-27 09:59:59,customer,C002,critical,error_rate;success_rate,hour,单个客户的500错误率突然升高
-GT-006,cost_runaway,2026-06-29 01:00:00,2026-06-29 03:59:59,customer,C004,warning,tokens_per_request;output_input_ratio;estimated_cost,hour,调用量未明显变化，但输出Token和推理Token持续放大
+GT-001,key_leak_suspected,2026-07-03 03:15:00,2026-07-03 03:24:59,api_key,key_c007_2,critical,request_count;distinct_ip_count;new_ip_ratio;off_hours,minute,非工作时间内单Key从大量新IP高频调用
+GT-002,model_congestion,2026-07-07 16:00:00,2026-07-07 17:59:59,model,DeepSeek-V4,critical,p95_latency_ms;queue_p95_ms;error_rate,hour,模型队列和响应时延同时升高并伴随部分503
+GT-003,provider_outage,2026-07-11 10:00:00,2026-07-11 11:59:59,provider,Qwen,critical,error_rate;server_error_rate;p95_latency_ms,hour,单一供应商大面积503，其他供应商相对正常
+GT-004,token_spike,2026-07-15 14:00:00,2026-07-15 15:59:59,customer,C003,warning,total_tokens;tokens_per_request;estimated_cost,hour,客户单次请求Token显著上升并带来成本突增
+GT-005,customer_error_burst,2026-07-18 09:00:00,2026-07-18 09:59:59,customer,C002,critical,error_rate;success_rate,hour,单个客户的500错误率突然升高
+GT-006,cost_runaway,2026-07-20 01:00:00,2026-07-20 03:59:59,customer,C004,warning,tokens_per_request;output_input_ratio;estimated_cost,hour,调用量未明显变化，但输出Token和推理Token持续放大

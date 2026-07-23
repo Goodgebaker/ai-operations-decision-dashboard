@@ -1,4 +1,4 @@
 model_id,request_count,total_tokens,success_rate,p95_latency_ms
-gpt-4.1-mini,4445,3179273,92.85,2031
-qwen-plus,2993,2151457,93.59,2017
-deepseek-chat,2562,1852486,93.95,2018
+DeepSeek-V4,9313,6662315,93.33,2034
+Minimax-M2.5,384,292259,92.71,2015
+Qwen3.6-35B-A3B,303,228642,94.72,2015

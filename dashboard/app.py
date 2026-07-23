@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from src.external_benchmarks import build_capacity_profiles
 from src.interactive_risk_policy import (
     build_signal_events,
     build_unknown_pattern_events,
@@ -48,12 +49,17 @@ PATHS = {
     "profiles": PROJECT_ROOT / "outputs" / "model_capability_profiles.csv",
     "risks": PROJECT_ROOT / "outputs" / "model_health_risks.csv",
     "evidence": PROJECT_ROOT / "outputs" / "model_diagnostic_evidence.csv",
+    "external_benchmarks": PROJECT_ROOT / "data" / "external_model_benchmarks.csv",
+    "resource_model": PROJECT_ROOT / "data" / "resource_model_timeseries.csv",
+    "resource_instances": PROJECT_ROOT / "data" / "resource_instance_hourly.csv",
+    "resource_capacity": PROJECT_ROOT / "outputs" / "resource_capacity_daily.csv",
     "config": PROJECT_ROOT / "docs" / "ai_monitoring_metric_dictionary.xlsx",
 }
 
 REQUIRED_KEYS = [
     "logs", "operating", "snapshot", "capability", "diagnosis", "profiles",
-    "risks", "evidence", "config",
+    "risks", "evidence", "resource_model", "resource_instances",
+    "resource_capacity", "config",
 ]
 
 MODULES = [
@@ -61,8 +67,7 @@ MODULES = [
     "性能诊断",
     "成本分析",
     "能力校准",
-    "智能检测",
-    "诊断解释",
+    "资源与容量诊断",
 ]
 
 MODULE_NAVIGATION = [
@@ -70,8 +75,7 @@ MODULE_NAVIGATION = [
     ("性能诊断", ":material/speed:", "nav_performance"),
     ("成本分析", ":material/paid:", "nav_cost"),
     ("能力校准", ":material/model_training:", "nav_calibration"),
-    ("智能检测", ":material/health_and_safety:", "nav_detection"),
-    ("诊断解释", ":material/troubleshoot:", "nav_diagnosis"),
+    ("资源与容量诊断", ":material/memory:", "nav_capacity"),
 ]
 
 DIMENSION_LABELS = {
@@ -154,6 +158,12 @@ def load_all(_signature_value: tuple[int, ...]) -> dict[str, pd.DataFrame]:
         "profiles": _read_csv("profiles", ["date", "latest_capability_run_at"]),
         "risks": _read_csv("risks", ["date"]),
         "evidence": _read_csv("evidence", ["date"]),
+        "external_benchmarks": _read_csv("external_benchmarks"),
+        "resource_model": _read_csv(
+            "resource_model", ["timestamp", "date", "source_date"]
+        ),
+        "resource_instances": _read_csv("resource_instances", ["hour", "date"]),
+        "resource_capacity": _read_csv("resource_capacity", ["date"]),
     }
     config = PATHS["config"]
     if config.exists():
@@ -264,17 +274,255 @@ def _metric_row(items: list[dict[str, object]]) -> None:
         )
 
 
+def _overview_window(
+    logs: pd.DataFrame,
+    operating: pd.DataFrame,
+    window_label: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """在全局日期范围内应用总览页的快捷观察窗口。"""
+    window_days = {"近 7 天": 7, "近 30 天": 30}
+    days = window_days.get(window_label)
+    if days is None:
+        return logs.copy(), operating.copy()
+
+    latest_candidates = []
+    if not logs.empty:
+        latest_candidates.append(pd.Timestamp(logs["timestamp"].max()).normalize())
+    if not operating.empty:
+        latest_candidates.append(pd.Timestamp(operating["date"].max()).normalize())
+    if not latest_candidates:
+        return logs.copy(), operating.copy()
+
+    window_start = max(latest_candidates) - pd.Timedelta(days=days - 1)
+    visible_logs = logs[logs["timestamp"].ge(window_start)].copy()
+    visible_operating = operating[operating["date"].ge(window_start)].copy()
+    return visible_logs, visible_operating
+
+
+def _render_decision_summary(
+    operating: pd.DataFrame,
+    profiles: pd.DataFrame,
+) -> None:
+    """把评分转成运营人员可以直接执行的当日结论。"""
+    latest = _latest_by_model(operating)
+    if latest.empty:
+        return
+
+    weights = latest["request_count"].clip(lower=1)
+    overall_health = float(np.average(latest["health_score"], weights=weights))
+    weakest = latest.sort_values("health_score").iloc[0]
+    risk_components = {
+        "success_score": "成功率",
+        "performance_score": "性能",
+        "stability_score": "稳定性",
+        "cost_efficiency_score": "成本效率",
+    }
+    primary_risk_column = min(risk_components, key=lambda column: float(weakest[column]))
+    routing_candidates = profiles.dropna(subset=["routing_readiness_score"]).copy()
+    best_route = (
+        routing_candidates.sort_values("routing_readiness_score", ascending=False).iloc[0]
+        if not routing_candidates.empty
+        else None
+    )
+
+    if overall_health >= 85:
+        status = "运行良好"
+    elif overall_health >= 75:
+        status = "需要关注"
+    else:
+        status = "高风险"
+
+    summary = st.container(horizontal=True, horizontal_alignment="distribute", gap="small")
+    summary.metric("整体状态", status, f"健康指数 {overall_health:.1f}", border=True)
+    summary.metric(
+        "优先关注",
+        str(weakest["model_id"]),
+        f"健康指数 {weakest['health_score']:.1f}",
+        delta_color="inverse",
+        border=True,
+    )
+    summary.metric(
+        "主要风险信号",
+        risk_components[primary_risk_column],
+        f"评分 {weakest[primary_risk_column]:.1f}",
+        delta_color="inverse",
+        border=True,
+    )
+    if best_route is not None:
+        summary.metric(
+            "首选路由候选",
+            str(best_route["model_id"]),
+            f"路由评分 {best_route['routing_readiness_score']:.1f}",
+            border=True,
+        )
+
+    weakest_health = float(weakest["health_score"])
+    if weakest_health < 75:
+        st.warning(
+            f"建议降低 **{weakest['model_id']}** 的路由权重，并优先切换到健康度更高的候选模型。",
+            icon=":material/warning:",
+        )
+    elif weakest_health < 85:
+        st.info(
+            f"建议重点观察 **{weakest['model_id']}** 的延迟与成功率；目前可以继续使用，但暂不扩大流量。",
+            icon=":material/monitoring:",
+        )
+    else:
+        st.success(
+            "当前模型均处于健康区间，建议维持现有路由，并继续观察延迟和成本趋势。",
+            icon=":material/check_circle:",
+        )
+
+
+def _render_capacity_reference(benchmarks: pd.DataFrame) -> None:
+    """展示外部真实压测的稳定并发、吞吐和 429 观测边界。"""
+    _section(
+        "外部容量基准",
+        "来自真实外部压测汇总，用于候选模型选型；它不是当前生产并发，也不参与现有健康评分。",
+    )
+    if benchmarks.empty:
+        st.info("尚未接入外部压测标准表。")
+        return
+
+    capacity = build_capacity_profiles(benchmarks)
+    if capacity.empty:
+        st.info("外部压测数据中没有可用的容量组合。")
+        return
+
+    capacity["endpoint"] = capacity["provider"].astype(str) + " · " + capacity["model_id"].astype(str)
+    endpoint_options = sorted(capacity["endpoint"].unique())
+    endpoint_col, profile_col = st.columns([1.25, 1], gap="large", vertical_alignment="bottom")
+    with endpoint_col:
+        endpoint = st.selectbox(
+            "候选模型端点",
+            endpoint_options,
+            key="overview_capacity_endpoint",
+            help="同一模型在不同供应商上按不同端点展示。",
+        )
+    endpoint_rows = capacity[capacity["endpoint"].eq(endpoint)].sort_values("input_tokens_target")
+    io_options = endpoint_rows["io_profile"].tolist()
+    with profile_col:
+        io_profile = st.segmented_control(
+            "输入/输出档位",
+            io_options,
+            default=io_options[0],
+            required=True,
+            key="overview_capacity_io_profile",
+        )
+
+    selected = endpoint_rows[endpoint_rows["io_profile"].eq(io_profile)].iloc[0]
+    max_stable = int(selected["max_stable_concurrency"])
+    tested_max = int(selected["tested_max_concurrency"])
+    observed_limit = selected["observed_rate_limit_concurrency"]
+    limit_value = f"{int(observed_limit)} 并发" if pd.notna(observed_limit) else "测试内未触发"
+    ttft_value = (
+        f"{selected['ttft_ms_at_max_stable'] / 1_000:.2f} 秒"
+        if pd.notna(selected["ttft_ms_at_max_stable"])
+        else "无有效结果"
+    )
+    throughput_value = (
+        f"{selected['total_output_tokens_per_second_at_max_stable']:,.1f} token/s"
+        if pd.notna(selected["total_output_tokens_per_second_at_max_stable"])
+        else "无有效结果"
+    )
+    _metric_row(
+        [
+            {"label": "最高稳定测试并发", "value": f"{max_stable}" if max_stable else "无"},
+            {"label": "观测到的 429 边界", "value": limit_value, "delta_color": "inverse"},
+            {"label": "稳定并发下首字延迟", "value": ttft_value, "delta_color": "inverse"},
+            {"label": "稳定并发下总吞吐", "value": throughput_value},
+        ]
+    )
+    coverage = int(round(float(selected["stability_coverage_pct"])))
+    st.progress(
+        coverage,
+        text=f"稳定结果覆盖测试上限：{max_stable} / {tested_max} 并发（{coverage}%）",
+    )
+    if bool(selected["rate_limit_observed"]):
+        st.warning(
+            f"这个组合在 **{limit_value}** 观测到 429；上线时应在该并发之前预留分流余量。",
+            icon=":material/speed:",
+        )
+    else:
+        st.caption("测试范围内未观测到 429，但由于缺少重复试验，不能把测试上限直接当作生产配额。")
+
+    with st.expander("查看全部外部容量画像", icon=":material/table_chart:"):
+        capacity_table = capacity.sort_values(
+            ["rate_limit_observed", "max_stable_concurrency", "provider", "model_id"],
+            ascending=[True, False, True, True],
+        )
+        st.dataframe(
+            capacity_table,
+            column_order=[
+                "provider",
+                "model_id",
+                "io_profile",
+                "max_stable_concurrency",
+                "tested_max_concurrency",
+                "stability_coverage_pct",
+                "observed_rate_limit_concurrency",
+                "ttft_ms_at_max_stable",
+                "total_output_tokens_per_second_at_max_stable",
+                "capacity_state",
+                "capacity_confidence",
+            ],
+            column_config={
+                "provider": "供应商",
+                "model_id": "模型",
+                "io_profile": "输入/输出档位",
+                "max_stable_concurrency": "最高稳定测试并发",
+                "tested_max_concurrency": "测试上限",
+                "stability_coverage_pct": st.column_config.ProgressColumn(
+                    "稳定覆盖", min_value=0, max_value=100, format="%.1f%%"
+                ),
+                "observed_rate_limit_concurrency": "429 最低观测并发",
+                "ttft_ms_at_max_stable": st.column_config.NumberColumn(
+                    "首字延迟", format="%.0f ms"
+                ),
+                "total_output_tokens_per_second_at_max_stable": st.column_config.NumberColumn(
+                    "总吞吐", format="%.1f token/s"
+                ),
+                "capacity_state": "容量状态",
+                "capacity_confidence": "可信度",
+            },
+            hide_index=True,
+            height=360,
+        )
+
+
 def render_overview(
     logs: pd.DataFrame,
     operating: pd.DataFrame,
     profiles: pd.DataFrame,
+    external_benchmarks: pd.DataFrame,
 ) -> None:
     _section(
         "运营总览",
         "AI 中台运营驾驶舱：用真实调用指标与模型健康指数统一观察规模、质量、性能和成本。",
     )
+    st.caption("数据口径：调用与成本为真实资源基线校准后的模拟数据；外部容量和资源数据为真实来源。")
     if logs.empty or operating.empty:
         st.info("当前筛选范围没有运营数据。")
+        return
+
+    controls = st.container(horizontal=True, gap="small", vertical_alignment="bottom")
+    window_label = controls.segmented_control(
+        "观察窗口",
+        ["近 7 天", "近 30 天", "全部"],
+        default="近 7 天",
+        required=True,
+        key="overview_window",
+    )
+    trend_label = controls.segmented_control(
+        "趋势指标",
+        ["健康指数", "成功率", "P95 延迟", "单次成本"],
+        default="健康指数",
+        required=True,
+        key="overview_trend_metric",
+    )
+    logs, operating = _overview_window(logs, operating, str(window_label))
+    if logs.empty or operating.empty:
+        st.info("当前快捷观察窗口没有运营数据。")
         return
 
     daily = logs.groupby("date", as_index=False).agg(
@@ -301,6 +549,9 @@ def render_overview(
         }), include_groups=False)
         .reset_index(drop=True)
     )
+    _section("今日决策摘要", "先给出结论，再查看支撑结论的指标和明细。")
+    _render_decision_summary(operating, profiles)
+
     _metric_row([
         {"label": "调用量", "value": f"{len(logs):,}", "chart_data": daily["request_count"].tolist()},
         {"label": "Token", "value": f"{int(logs['total_tokens'].sum()):,}", "chart_data": daily["total_tokens"].tolist()},
@@ -318,17 +569,24 @@ def render_overview(
 
     left, right = st.columns([1.45, 1], gap="large")
     with left:
-        st.markdown("#### 健康指数趋势")
+        trend_specs = {
+            "健康指数": ("health_score", "健康指数", ".1f"),
+            "成功率": ("success_rate", "成功率（%）", ".2f"),
+            "P95 延迟": ("p95_latency_ms", "P95 延迟（ms）", ",.0f"),
+            "单次成本": ("cost_per_request", "单次成本（元）", ".4f"),
+        }
+        trend_column, trend_title, trend_format = trend_specs[str(trend_label)]
+        st.markdown(f"#### {trend_label}趋势")
         chart = _line_chart(
             operating,
             "date",
-            "health_score",
+            trend_column,
             "model_id",
-            "健康指数",
+            trend_title,
             [
                 alt.Tooltip("date:T", title="日期", format="%Y-%m-%d"),
                 alt.Tooltip("model_id:N", title="模型"),
-                alt.Tooltip("health_score:Q", title="健康指数", format=".1f"),
+                alt.Tooltip(f"{trend_column}:Q", title=str(trend_label), format=trend_format),
                 alt.Tooltip("health_level:N", title="等级"),
             ],
         )
@@ -353,6 +611,8 @@ def render_overview(
             hide_index=True,
             height=290,
         )
+
+    _render_capacity_reference(external_benchmarks)
 
     st.markdown("#### 健康评分构成")
     score_table = latest.sort_values("health_score", ascending=False)
@@ -380,6 +640,7 @@ def render_performance(operating: pd.DataFrame) -> None:
         "性能诊断",
         "模型性能画像：同时观察典型延迟、尾部延迟、日内波动和稳定性，输出可比较的性能评分。",
     )
+    st.caption("数据口径：模型名称与 TTFT 基线来自真实资源数据；请求级延迟历史为校准后的模拟数据。")
     if operating.empty:
         st.info("当前筛选范围没有性能数据。")
         return
@@ -456,6 +717,7 @@ def render_cost(operating: pd.DataFrame) -> None:
         "成本分析",
         "模型成本效率分析：比较单请求成本、Token 成本、趋势偏移和质量/成本综合表现。",
     )
+    st.warning("当前没有真实账单数据，本页金额均为模拟价格假设，只用于演示相对成本趋势。", icon=":material/info:")
     if operating.empty:
         st.info("当前筛选范围没有成本数据。")
         return
@@ -529,6 +791,7 @@ def render_calibration(
         "主动拨测与模型能力校准",
         "在固定输入和标准环境下校准能力、稳定性与响应速度，再与真实调用对照，定位异常来源并形成路由画像。",
     )
+    st.caption("数据口径：当前能力得分和历史拨测为模拟假设；模型名称与延迟基线已按真实资源数据校准。")
     if profiles.empty:
         st.info("缺少模型能力画像数据，请先运行 capability_calibration.py、model_operations.py 和 model_profile.py。")
         return
@@ -705,6 +968,160 @@ def render_calibration(
             c1, c2 = st.columns(2)
             c1.download_button("下载拨测运行 CSV", probe_runs.to_csv(index=False).encode("utf-8-sig"), "probe_runs.csv", "text/csv", icon=":material/download:")
             c2.download_button("下载拨测事件 CSV", probe_events.to_csv(index=False).encode("utf-8-sig"), "probe_alerts.csv", "text/csv", icon=":material/download:")
+
+
+def render_resource_capacity(
+    model_series: pd.DataFrame,
+    instance_hourly: pd.DataFrame,
+    capacity: pd.DataFrame,
+) -> None:
+    _section(
+        "资源与容量诊断",
+        "基于每日真实工作簿观察并发、等待、TTFT、吞吐、NPU、Cache 与 HBM，定位算力和显存瓶颈。",
+    )
+    st.caption("数据口径：真实观测 · 实例标识已匿名化 · 中台模型不在监控范围内")
+    if model_series.empty or instance_hourly.empty or capacity.empty:
+        st.info("尚未导入完整的真实资源数据。请把每日三份 Excel 放入指定目录后运行“更新每日数据.bat”。")
+        return
+
+    latest_date = pd.Timestamp(capacity["date"].max())
+    latest = capacity[capacity["date"].eq(latest_date)].copy()
+    high_npu_samples = int(latest["high_npu_samples"].sum())
+    minimum_headroom = float(latest["hbm_headroom_pct"].min())
+    _metric_row(
+        [
+            {"label": "最新真实数据", "value": latest_date.strftime("%Y-%m-%d")},
+            {"label": "受监控模型", "value": f"{latest['model_id'].nunique()} 个"},
+            {"label": "商用实例", "value": f"{int(latest['instance_count'].sum())} 个"},
+            {"label": "最大等待", "value": f"{int(latest['waiting_max_busy'].max())}"},
+            {
+                "label": "NPU 高负载样本",
+                "value": f"{high_npu_samples}",
+                "delta_color": "inverse",
+            },
+            {
+                "label": "最小 HBM 余量",
+                "value": f"{minimum_headroom:.1f}%",
+                "delta_color": "inverse",
+            },
+        ]
+    )
+
+    if not bool(latest["baseline_ready"].all()):
+        observed_days = int(latest.get("observed_days", pd.Series([1])).max())
+        st.info(
+            f"当前仅有 {observed_days} 天真实记录；达到 7 天后再启用容量趋势基线，当前结论只反映当日状态。",
+            icon=":material/calendar_clock:",
+        )
+
+    st.markdown("#### 模型服务时序")
+    metric_label = st.segmented_control(
+        "资源趋势指标",
+        ["运行并发", "等待队列", "首字延迟", "服务吞吐"],
+        default="运行并发",
+        required=True,
+        key="resource_metric",
+    )
+    metric_specs = {
+        "运行并发": ("running", "运行并发"),
+        "等待队列": ("waiting", "等待数量"),
+        "首字延迟": ("ttft_ms", "TTFT（ms）"),
+        "服务吞吐": ("tokens_per_second", "Token/s（服务级）"),
+    }
+    metric_column, axis_title = metric_specs[str(metric_label)]
+    chart_data = model_series.dropna(subset=[metric_column]).copy()
+    chart = (
+        alt.Chart(chart_data)
+        .mark_line()
+        .encode(
+            x=alt.X("timestamp:T", title="时间"),
+            y=alt.Y(f"{metric_column}:Q", title=axis_title),
+            color=alt.Color("model_id:N", title="模型"),
+            tooltip=[
+                alt.Tooltip("timestamp:T", title="时间", format="%Y-%m-%d %H:%M"),
+                alt.Tooltip("model_id:N", title="模型"),
+                alt.Tooltip(f"{metric_column}:Q", title=str(metric_label), format=",.2f"),
+            ],
+        )
+        .properties(height=330)
+    )
+    st.altair_chart(chart, width="stretch")
+
+    left, right = st.columns([1.4, 1], gap="large")
+    with left:
+        st.markdown("#### 匿名实例 NPU 热力图")
+        heatmap_model = st.selectbox(
+            "热力图模型",
+            sorted(instance_hourly["model_id"].unique()),
+            key="resource_heatmap_model",
+        )
+        heatmap_data = instance_hourly[
+            instance_hourly["model_id"].eq(heatmap_model)
+        ].copy()
+        heatmap = (
+            alt.Chart(heatmap_data)
+            .mark_rect()
+            .encode(
+                x=alt.X("hour:T", title="小时"),
+                y=alt.Y("instance_id:N", title="匿名实例"),
+                color=alt.Color(
+                    "npu_max:Q",
+                    title="NPU 峰值（%）",
+                    scale=alt.Scale(domain=[0, 100], scheme="yelloworangered"),
+                ),
+                tooltip=[
+                    alt.Tooltip("hour:T", title="时间", format="%Y-%m-%d %H:%M"),
+                    alt.Tooltip("instance_id:N", title="匿名实例"),
+                    alt.Tooltip("npu_mean:Q", title="平均 NPU", format=".1f"),
+                    alt.Tooltip("npu_max:Q", title="峰值 NPU", format=".1f"),
+                ],
+            )
+            .properties(height=330)
+        )
+        st.altair_chart(heatmap, width="stretch")
+    with right:
+        st.markdown("#### 最新容量判断")
+        for _, row in latest.sort_values("model_id").iterrows():
+            icon = ":material/error:" if row["capacity_state"] == "容量风险" else ":material/warning:"
+            with st.container(border=True):
+                st.markdown(f"**{row['model_id']} · {row['capacity_state']}**")
+                st.write(row["diagnosis"])
+                st.caption(
+                    f"实例 {int(row['instance_count'])} · 忙时并发 {int(row['running_max_busy'])} · "
+                    f"NPU 峰值 {row['npu_max']:.0f}% · HBM {row['hbm_pct']:.2f}% {icon}"
+                )
+
+    st.markdown("#### 容量与资源明细")
+    st.dataframe(
+        latest.sort_values(["capacity_state", "model_id"]),
+        column_order=[
+            "model_id", "capacity_state", "instance_count", "running_max_busy",
+            "waiting_max_busy", "concurrency_ratio", "ttft_mean_ms",
+            "tokens_per_second_mean", "npu_mean", "npu_p95", "npu_max",
+            "cache_pct", "hbm_pct", "hbm_headroom_pct", "diagnosis",
+        ],
+        column_config={
+            "model_id": "模型",
+            "capacity_state": "容量状态",
+            "instance_count": "实例数",
+            "running_max_busy": "忙时并发",
+            "waiting_max_busy": "最大等待",
+            "concurrency_ratio": st.column_config.ProgressColumn(
+                "并发/实例", min_value=0, max_value=1, format="%.1f"
+            ),
+            "ttft_mean_ms": st.column_config.NumberColumn("平均 TTFT", format="%,.0f ms"),
+            "tokens_per_second_mean": st.column_config.NumberColumn("服务吞吐", format="%.2f token/s"),
+            "npu_mean": st.column_config.NumberColumn("平均 NPU", format="%.1f%%"),
+            "npu_p95": st.column_config.NumberColumn("NPU P95", format="%.1f%%"),
+            "npu_max": st.column_config.NumberColumn("NPU 峰值", format="%.0f%%"),
+            "cache_pct": st.column_config.NumberColumn("Cache", format="%.2f%%"),
+            "hbm_pct": st.column_config.NumberColumn("HBM", format="%.2f%%"),
+            "hbm_headroom_pct": st.column_config.NumberColumn("HBM 余量", format="%.2f%%"),
+            "diagnosis": "诊断说明",
+        },
+        hide_index=True,
+        height=280,
+    )
 
 
 def _active_detection_settings(
@@ -1203,25 +1620,25 @@ def sidebar_filters(data: dict[str, pd.DataFrame]) -> tuple[str, list[str], pd.T
     st.sidebar.subheader("全局筛选")
     minimum = logs["timestamp"].min().date()
     maximum = logs["timestamp"].max().date()
-    selected_dates = st.sidebar.date_input(
-        "日期范围",
-        value=(minimum, maximum),
-        min_value=minimum,
-        max_value=maximum,
-    )
+    all_models = sorted(logs["model_id"].dropna().unique())
+    models = st.sidebar.multiselect("模型", all_models, default=all_models)
+    with st.sidebar.expander("高级筛选", icon=":material/tune:"):
+        selected_dates = st.date_input(
+            "全局日期范围",
+            value=(minimum, maximum),
+            min_value=minimum,
+            max_value=maximum,
+            help="运营总览还可以在页面内使用近 7 天、近 30 天快捷窗口。",
+        )
+        all_customers = sorted(logs["customer_id"].dropna().unique())
+        customers = st.multiselect("客户", all_customers, default=all_customers)
+        st.caption("客户筛选只影响基于原始调用明细计算的驾驶舱 KPI；模型评分产物按全量模型流量生成。")
     if isinstance(selected_dates, (tuple, list)) and len(selected_dates) == 2:
         start_date, end_date = selected_dates
     else:
         start_date = end_date = selected_dates
     start = pd.Timestamp(start_date)
     end = pd.Timestamp(end_date) + pd.Timedelta(days=1)
-
-    all_models = sorted(logs["model_id"].dropna().unique())
-    models = st.sidebar.multiselect("模型", all_models, default=all_models)
-    with st.sidebar.expander("调用明细筛选"):
-        all_customers = sorted(logs["customer_id"].dropna().unique())
-        customers = st.multiselect("客户", all_customers, default=all_customers)
-        st.caption("客户筛选只影响基于原始调用明细计算的驾驶舱 KPI；模型评分产物按全量模型流量生成。")
     st.sidebar.divider()
     if st.sidebar.button("重新加载数据", icon=":material/refresh:", width="stretch"):
         st.cache_data.clear()
@@ -1260,6 +1677,15 @@ def main() -> None:
     default_risks = _model_filter(_date_filter(data["risks"], "date", start, end), models)
     profiles = _model_filter(data["profiles"], models)
     capability = _model_filter(data["capability"], models)
+    resource_model = _model_filter(
+        _date_filter(data["resource_model"], "timestamp", start, end), models
+    )
+    resource_instances = _model_filter(
+        _date_filter(data["resource_instances"], "hour", start, end), models
+    )
+    resource_capacity = _model_filter(
+        _date_filter(data["resource_capacity"], "date", start, end), models
+    )
     probe_runs = _model_filter(_date_filter(data["probe_runs"], "started_at", start, end), models)
     probe_events = _model_filter(_date_filter(data["probe_alerts"], "detected_at", start, end), models)
     fusion_alerts = _date_filter(data["fusion_alerts"], "detected_at", start, end)
@@ -1294,20 +1720,26 @@ def main() -> None:
     evidence = _date_filter(runtime_evidence, "date", start, end)
 
     st.title("AI 中台运营决策实验台")
-    st.caption("真实调用 + 主动拨测 → 智能运营分析 → 模型能力画像 → 动态智能路由")
-    st.info(
-        f"当前视图：{module} · {start.strftime('%Y-%m-%d')} 至 {(end - pd.Timedelta(days=1)).strftime('%Y-%m-%d')} · {len(models)} 个模型",
-        icon=":material/filter_alt:",
+    st.caption("真实资源 + 校准模拟调用 + 主动拨测 → 智能运营分析 → 模型能力画像 → 动态智能路由")
+    st.caption(
+        f":material/filter_alt: 当前视图：{module} · {start.strftime('%Y-%m-%d')} 至 "
+        f"{(end - pd.Timedelta(days=1)).strftime('%Y-%m-%d')} · {len(models)} 个模型"
     )
 
     if module == "运营总览":
-        render_overview(logs, operating, profiles)
+        render_overview(logs, operating, profiles, data["external_benchmarks"])
     elif module == "性能诊断":
         render_performance(operating)
     elif module == "成本分析":
         render_cost(operating)
     elif module == "能力校准":
         render_calibration(profiles, capability, diagnosis, probe_runs, probe_events)
+    elif module == "资源与容量诊断":
+        render_resource_capacity(
+            resource_model,
+            resource_instances,
+            resource_capacity,
+        )
     elif module == "智能检测":
         render_detection(
             risks,

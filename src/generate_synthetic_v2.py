@@ -9,6 +9,23 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+try:
+    from .model_catalog import (
+        MODEL_IDS,
+        MODEL_LATENCY,
+        MODEL_PRICE,
+        MODEL_PROVIDER,
+        load_observed_calibration,
+    )
+except ImportError:  # 支持 ``python src/generate_synthetic_v2.py`` 直接运行。
+    from model_catalog import (
+        MODEL_IDS,
+        MODEL_LATENCY,
+        MODEL_PRICE,
+        MODEL_PROVIDER,
+        load_observed_calibration,
+    )
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOG_OUTPUT = PROJECT_ROOT / "data" / "synthetic_logs_v2.csv"
@@ -29,21 +46,7 @@ class GroundTruth:
     description: str
 
 
-MODEL_PROVIDER = {
-    "gpt-4.1-mini": "OpenAI",
-    "qwen-plus": "Alibaba Cloud",
-    "deepseek-chat": "DeepSeek",
-}
-MODEL_LATENCY = {
-    "gpt-4.1-mini": 1_350,
-    "qwen-plus": 1_150,
-    "deepseek-chat": 1_050,
-}
-MODEL_PRICE_PER_TOKEN = {
-    "gpt-4.1-mini": 0.0000024,
-    "qwen-plus": 0.0000016,
-    "deepseek-chat": 0.0000012,
-}
+MODEL_PRICE_PER_TOKEN = MODEL_PRICE
 
 
 def _build_timestamps(
@@ -106,17 +109,11 @@ def _base_logs(
         ]
     )
 
-    request_models = rng.choice(
-        ["gpt-4.1-mini", "qwen-plus", "deepseek-chat"],
-        size=rows,
-        p=[0.45, 0.30, 0.25],
-    )
+    model_ids, model_weights, ttft_samples, _ = load_observed_calibration()
+    request_models = rng.choice(model_ids, size=rows, p=model_weights)
     response_models = request_models.copy()
     fallback_mask = rng.random(rows) < 0.012
-    fallback_models = rng.choice(
-        ["gpt-4.1-mini", "qwen-plus", "deepseek-chat"],
-        size=fallback_mask.sum(),
-    )
+    fallback_models = rng.choice(model_ids, size=fallback_mask.sum(), p=model_weights)
     response_models[fallback_mask] = fallback_models
     providers = pd.Series(response_models).map(MODEL_PROVIDER).to_numpy()
 
@@ -140,20 +137,29 @@ def _base_logs(
         0,
     )
     reasoning_tokens = np.where(
-        np.isin(response_models, ["gpt-4.1-mini", "deepseek-chat"]),
+        np.isin(response_models, ["DeepSeek-V4", "Minimax-M2.5"]),
         (output_tokens * rng.uniform(0.05, 0.28, rows)).astype(int),
         0,
     )
 
     queue_latency_ms = np.maximum(rng.gamma(2.0, 35.0, rows).astype(int), 1)
+    observed_ttft_ms = np.array(
+        [float(rng.choice(ttft_samples[model_id])) for model_id in response_models]
+    )
+    observed_ttft_ms *= rng.normal(1.0, 0.05, rows).clip(0.75, 1.30)
     model_latency = pd.Series(response_models).map(MODEL_LATENCY).to_numpy()
     first_token_latency_ms = np.maximum(
-        (model_latency * 0.30 + queue_latency_ms + rng.normal(0, 90, rows)).astype(int),
+        (observed_ttft_ms + queue_latency_ms + rng.normal(0, 35, rows)).astype(int),
         60,
     )
     generation_ms = output_tokens * rng.uniform(2.0, 4.5, rows)
     latency_ms = np.maximum(
-        (model_latency + queue_latency_ms + generation_ms + rng.normal(0, 180, rows)).astype(int),
+        (
+            np.maximum(model_latency, first_token_latency_ms)
+            + queue_latency_ms
+            + generation_ms
+            + rng.normal(0, 180, rows)
+        ).astype(int),
         first_token_latency_ms + 30,
     )
 
@@ -254,7 +260,7 @@ def _inject_anomalies(
     congestion_end = congestion_start + pd.Timedelta(hours=1, minutes=59, seconds=59)
     mask = logs["timestamp"].between(congestion_start, congestion_end) & logs[
         "model_id"
-    ].eq("gpt-4.1-mini")
+    ].eq("DeepSeek-V4")
     logs.loc[mask, "queue_latency_ms"] *= 6
     logs.loc[mask, ["first_token_latency_ms", "latency_ms"]] *= 4
     slow_indices = logs.index[mask]
@@ -264,7 +270,7 @@ def _inject_anomalies(
     truth.append(
         GroundTruth(
             "GT-002", "model_congestion", str(congestion_start), str(congestion_end),
-            "model", "gpt-4.1-mini", "critical",
+            "model", "DeepSeek-V4", "critical",
             "p95_latency_ms;queue_p95_ms;error_rate", "hour",
             "模型队列和响应时延同时升高并伴随部分503",
         )
@@ -274,7 +280,7 @@ def _inject_anomalies(
     outage_end = outage_start + pd.Timedelta(hours=1, minutes=59, seconds=59)
     mask = logs["timestamp"].between(outage_start, outage_end) & logs[
         "provider"
-    ].eq("Alibaba Cloud")
+    ].eq("Qwen")
     outage_indices = logs.index[mask]
     if len(outage_indices):
         failed = rng.choice(
@@ -285,7 +291,7 @@ def _inject_anomalies(
     truth.append(
         GroundTruth(
             "GT-003", "provider_outage", str(outage_start), str(outage_end),
-            "provider", "Alibaba Cloud", "critical",
+            "provider", "Qwen", "critical",
             "error_rate;server_error_rate;p95_latency_ms", "hour",
             "单一供应商大面积503，其他供应商相对正常",
         )
@@ -357,7 +363,12 @@ def build_dataset(
         raise ValueError("base_rpm必须大于0")
 
     rng = np.random.default_rng(seed)
-    start = pd.Timestamp("2026-06-01 00:00:00")
+    _, _, _, latest_observed = load_observed_calibration()
+    start = (
+        latest_observed.normalize() - pd.Timedelta(days=days - 1)
+        if latest_observed is not None
+        else pd.Timestamp("2026-06-01 00:00:00")
+    )
     logs = _base_logs(rng, start, days, base_rpm)
     logs, truth = _inject_anomalies(logs, rng, start)
 
@@ -366,6 +377,8 @@ def build_dataset(
         round(tokens * MODEL_PRICE_PER_TOKEN[model], 6)
         for tokens, model in zip(logs["total_tokens"], logs["response_model"])
     ]
+    logs["data_origin"] = "synthetic_calibrated"
+    logs["cost_origin"] = "synthetic_assumption"
     error_map = {
         400: "BAD_REQUEST",
         401: "UNAUTHORIZED",

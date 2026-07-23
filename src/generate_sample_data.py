@@ -8,6 +8,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+try:
+    from .model_catalog import MODEL_IDS, MODEL_PRICE, MODEL_PROVIDER
+except ImportError:  # 支持 ``python src/generate_sample_data.py`` 直接运行。
+    from model_catalog import MODEL_IDS, MODEL_PRICE, MODEL_PROVIDER
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "sample_logs.csv"
@@ -35,16 +40,11 @@ def build_sample_logs(rows: int = 10_000, seed: int = 42) -> pd.DataFrame:
     )
 
     models = rng.choice(
-        ["gpt-4.1-mini", "qwen-plus", "deepseek-chat"],
+        MODEL_IDS,
         size=rows,
-        p=[0.45, 0.30, 0.25],
+        p=[0.93, 0.04, 0.03],
     )
-    provider_map = {
-        "gpt-4.1-mini": "OpenAI",
-        "qwen-plus": "Alibaba Cloud",
-        "deepseek-chat": "DeepSeek",
-    }
-    providers = pd.Series(models).map(provider_map).to_numpy()
+    providers = pd.Series(models).map(MODEL_PROVIDER).to_numpy()
 
     input_tokens = np.maximum(rng.lognormal(6.0, 0.65, rows).astype(int), 20)
     output_tokens = np.maximum(rng.lognormal(5.2, 0.60, rows).astype(int), 10)
@@ -99,7 +99,7 @@ def build_sample_logs(rows: int = 10_000, seed: int = 42) -> pd.DataFrame:
 
     latency_spike = (
         data["timestamp"].between("2026-07-05 16:00:00", "2026-07-05 16:59:59")
-        & data["model_id"].eq("gpt-4.1-mini")
+        & data["model_id"].eq("DeepSeek-V4")
     )
     data.loc[latency_spike, ["first_token_latency_ms", "latency_ms"]] *= 4
 
@@ -115,7 +115,12 @@ def build_sample_logs(rows: int = 10_000, seed: int = 42) -> pd.DataFrame:
 
     error_map = {400: "BAD_REQUEST", 401: "UNAUTHORIZED", 429: "RATE_LIMIT", 500: "INTERNAL_ERROR", 503: "SERVICE_UNAVAILABLE"}
     data["error_code"] = data["status_code"].map(error_map).fillna("")
-    data["estimated_cost"] = (data["total_tokens"] * 0.000002).round(6)
+    data["estimated_cost"] = [
+        round(tokens * MODEL_PRICE[model_id], 6)
+        for tokens, model_id in zip(data["total_tokens"], data["model_id"], strict=False)
+    ]
+    data["data_origin"] = "synthetic_calibrated"
+    data["cost_origin"] = "synthetic_assumption"
     data["safety_hit"] = rng.random(rows) < 0.012
 
     return data.sort_values("timestamp").reset_index(drop=True)

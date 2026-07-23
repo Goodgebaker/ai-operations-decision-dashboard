@@ -11,7 +11,11 @@ REQUIRED_FILES = (
     PROJECT_ROOT / "requirements.txt",
     PROJECT_ROOT / ".streamlit" / "config.toml",
     PROJECT_ROOT / "src" / "__init__.py",
+    PROJECT_ROOT / "src" / "external_benchmarks.py",
     PROJECT_ROOT / "src" / "interactive_risk_policy.py",
+    PROJECT_ROOT / "data" / "external_model_benchmarks.csv",
+    PROJECT_ROOT / "data" / "resource_model_timeseries.csv",
+    PROJECT_ROOT / "data" / "resource_instance_hourly.csv",
     PROJECT_ROOT / "data" / "synthetic_logs_v2.csv",
     PROJECT_ROOT / "outputs" / "model_operating_scores.csv",
     PROJECT_ROOT / "outputs" / "model_operating_snapshot.csv",
@@ -20,6 +24,7 @@ REQUIRED_FILES = (
     PROJECT_ROOT / "outputs" / "model_capability_profiles.csv",
     PROJECT_ROOT / "outputs" / "model_health_risks.csv",
     PROJECT_ROOT / "outputs" / "model_diagnostic_evidence.csv",
+    PROJECT_ROOT / "outputs" / "resource_capacity_daily.csv",
     PROJECT_ROOT / "docs" / "ai_monitoring_metric_dictionary.xlsx",
 )
 STREAMLIT_DEPENDENCY_FILES = (
