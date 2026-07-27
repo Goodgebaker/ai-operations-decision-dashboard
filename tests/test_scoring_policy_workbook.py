@@ -36,12 +36,15 @@ class ScoringPolicyWorkbookTests(unittest.TestCase):
             {
                 "success_score": 100,
                 "performance_score": 80,
-                "stability_score": 60,
                 "cost_efficiency_score": 40,
             },
             self.policy,
         )
-        self.assertEqual(score, 76)
+        self.assertEqual(score, 81)
+        health_components = {
+            rule.component for rule in self.policy.rules_for("health")
+        }
+        self.assertNotIn("stability_score", health_components)
         self.assertEqual(classify_score("health", score, self.policy), "健康")
 
     def test_risk_band_boundaries_match_the_dictionary(self) -> None:

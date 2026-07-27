@@ -67,6 +67,44 @@ class DashboardSmokeTests(unittest.TestCase):
                         "查看原始诊断证据与完整数据",
                         [item.label for item in app.expander],
                     )
+                if module == "性能诊断":
+                    self.assertIn("时间范围", [item.label for item in app.segmented_control])
+                    time_range = next(
+                        item for item in app.segmented_control if item.label == "时间范围"
+                    )
+                    self.assertEqual(
+                        ["过去 7 天", "过去 30 天", "过去 90 天"],
+                        time_range.options,
+                    )
+                    self.assertIn("添加对比模型", [item.label for item in app.selectbox])
+                    self.assertIn("与上一周期对比", [item.label for item in app.toggle])
+                    markdown_values = [item.value for item in app.markdown]
+                    self.assertIn("**综合体验**", markdown_values)
+                    self.assertIn("**响应速度**", markdown_values)
+                    self.assertIn("**稳定性**", markdown_values)
+                    self.assertIn("P50", [item.label for item in app.metric])
+                    self.assertIn("P95", [item.label for item in app.metric])
+                    self.assertIn("P99", [item.label for item in app.metric])
+                    self.assertIn(
+                        "下载当前窗口原始数据",
+                        [item.label for item in app.get("download_button")],
+                    )
+                if module == "成本分析":
+                    self.assertIn("时间范围", [item.label for item in app.segmented_control])
+                    self.assertIn("添加对比模型", [item.label for item in app.selectbox])
+                    self.assertIn("与上一周期对比", [item.label for item in app.toggle])
+                    markdown_values = [item.value for item in app.markdown]
+                    self.assertIn("**成本总评分**", markdown_values)
+                    self.assertIn("**成本效率**", markdown_values)
+                    self.assertIn("**质量保障**", markdown_values)
+                    metric_labels = [item.label for item in app.metric]
+                    self.assertIn("单请求成本", metric_labels)
+                    self.assertIn("千 Token 成本", metric_labels)
+                    self.assertIn("历史基线倍数", metric_labels)
+                    self.assertIn(
+                        "下载当前窗口原始数据",
+                        [item.label for item in app.get("download_button")],
+                    )
                 if module == "资源与容量诊断":
                     self.assertIn("最新真实数据", [item.label for item in app.metric])
                     self.assertIn("资源趋势指标", [item.label for item in app.segmented_control])
@@ -84,7 +122,7 @@ class DashboardSmokeTests(unittest.TestCase):
             "运营总览", "性能诊断", "成本分析", "能力校准", "资源与容量诊断"
         }]))
 
-    def test_overview_exposes_decision_and_external_capacity_context(self) -> None:
+    def test_overview_exposes_simplified_decision_context(self) -> None:
         app = AppTest.from_file(
             str(PROJECT_ROOT / "dashboard" / "app.py"),
             default_timeout=30,
@@ -92,10 +130,81 @@ class DashboardSmokeTests(unittest.TestCase):
 
         self.assertEqual([], list(app.exception))
         self.assertIn("今日决策摘要", [item.value for item in app.subheader])
-        self.assertIn("外部容量基准", [item.value for item in app.subheader])
+        self.assertNotIn("外部容量基准", [item.value for item in app.subheader])
         self.assertIn("观察窗口", [item.label for item in app.segmented_control])
-        self.assertIn("趋势指标", [item.label for item in app.segmented_control])
-        self.assertIn("最高稳定测试并发", [item.label for item in app.metric])
+        overview_window = next(
+            item for item in app.segmented_control if item.label == "观察窗口"
+        )
+        self.assertIn("近 1 天", overview_window.options)
+        self.assertIn("选择下方趋势图的指标", [item.label for item in app.segmented_control])
+        self.assertNotIn("最高稳定测试并发", [item.label for item in app.metric])
+        self.assertNotIn("健康趋势范围", [item.label for item in app.segmented_control])
+        self.assertIn("模型总体健康指数", [item.value for item in app.caption])
+        self.assertIn("成功率评分", [item.label for item in app.metric])
+        self.assertIn("性能评分", [item.label for item in app.metric])
+        self.assertIn("成本评分", [item.label for item in app.metric])
+        self.assertNotIn("成本效率评分", [item.label for item in app.metric])
+        self.assertIn("风险分析与推荐动作", [item.value for item in app.caption])
+        self.assertNotIn("稳定性评分", [item.label for item in app.metric])
+        ranking_styles = app.dataframe[0].proto.arrow_data.styler.styles
+        self.assertIn("#dcfce7", ranking_styles)
+        self.assertIn("#fef3c7", ranking_styles)
+        self.assertIn("#fee2e2", ranking_styles)
+
+    def test_overall_health_gauge_ignores_model_filter(self) -> None:
+        app = AppTest.from_file(
+            str(PROJECT_ROOT / "dashboard" / "app.py"),
+            default_timeout=30,
+        ).run()
+
+        self.assertEqual([], list(app.exception))
+        gauge_before = app.get("vega_lite_chart")[0].proto.spec
+        app.multiselect[0].set_value(["DeepSeek-V4"])
+        app.run()
+
+        self.assertEqual([], list(app.exception))
+        gauge_after = app.get("vega_lite_chart")[0].proto.spec
+        self.assertEqual(gauge_before, gauge_after)
+
+    def test_performance_comparison_uses_available_model_data(self) -> None:
+        app = AppTest.from_file(
+            str(PROJECT_ROOT / "dashboard" / "app.py"),
+            default_timeout=30,
+        ).run()
+        next(
+            button for button in app.sidebar.button if button.label == "性能诊断"
+        ).click().run()
+
+        comparison = next(
+            item for item in app.selectbox if item.label == "添加对比模型"
+        )
+        comparison.select("Minimax-M2.5").run()
+
+        self.assertEqual([], list(app.exception))
+        self.assertIn(
+            "#### 与 Minimax-M2.5 对比",
+            [item.value for item in app.markdown],
+        )
+
+    def test_cost_comparison_uses_available_model_data(self) -> None:
+        app = AppTest.from_file(
+            str(PROJECT_ROOT / "dashboard" / "app.py"),
+            default_timeout=30,
+        ).run()
+        next(
+            button for button in app.sidebar.button if button.label == "成本分析"
+        ).click().run()
+
+        comparison = next(
+            item for item in app.selectbox if item.label == "添加对比模型"
+        )
+        comparison.select("Minimax-M2.5").run()
+
+        self.assertEqual([], list(app.exception))
+        self.assertIn(
+            "#### 与 Minimax-M2.5 对比",
+            [item.value for item in app.markdown],
+        )
 
 
 if __name__ == "__main__":

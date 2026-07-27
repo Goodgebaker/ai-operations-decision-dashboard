@@ -85,6 +85,13 @@ DIMENSION_LABELS = {
     "tool_call": "工具调用",
 }
 
+PERFORMANCE_SCORE_LEVELS = (
+    (80.0, "优秀", "green"),
+    (60.0, "良好", "blue"),
+    (40.0, "一般", "orange"),
+    (0.0, "较差", "red"),
+)
+
 ALGORITHM_OPTIONS = {
     "复合规则": ("pred_composite_rules", "score_composite_rules"),
     "滚动 MAD": ("pred_mad", "score_mad"),
@@ -108,6 +115,55 @@ st.set_page_config(
 st.html(
     """
     <style>
+      :root {
+        --ops-blue: #155eef;
+        --ops-border: #e5e9f0;
+        --ops-muted: #667085;
+        --ops-surface: #ffffff;
+      }
+      .stApp {
+        background: #ffffff;
+      }
+      [data-testid="stVerticalBlockBorderWrapper"],
+      [data-testid="stMetric"] {
+        border-radius: 16px !important;
+        border-color: var(--ops-border) !important;
+        background: var(--ops-surface);
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.035);
+        transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+      }
+      [data-testid="stVerticalBlockBorderWrapper"]:hover,
+      [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        border-color: #cfd7e6 !important;
+        box-shadow: 0 8px 22px rgba(16, 24, 40, 0.07);
+      }
+      [data-testid="stMetricLabel"] {
+        color: #344054;
+        font-weight: 600;
+      }
+      [data-testid="stMetricValue"] {
+        color: #172b4d;
+        letter-spacing: -0.025em;
+      }
+      [data-testid="stDataFrame"],
+      [data-testid="stVegaLiteChart"] {
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .st-key-health_core [data-testid="stMetricValue"] {
+        font-size: 3rem;
+        line-height: 1;
+        font-weight: 700;
+      }
+      .st-key-health_action h3 {
+        font-size: 1.25rem;
+        line-height: 1.35;
+        margin-top: 0.4rem;
+      }
+      .st-key-health_breakdown [data-testid="stMetricValue"] {
+        font-size: 1.5rem;
+      }
       [class*="st-key-nav_"] button {
         min-height: 3.1rem;
         justify-content: flex-start;
@@ -213,6 +269,86 @@ def _fmt_delta(current: float, previous: float, suffix: str = "") -> str | None:
     return f"{current - previous:+,.1f}{suffix}"
 
 
+def _performance_score_level(score: float) -> tuple[str, str]:
+    """将性能类评分统一转成自然语言等级与语义颜色。"""
+    if pd.isna(score):
+        return "数据不足", "gray"
+    for threshold, label, color in PERFORMANCE_SCORE_LEVELS:
+        if float(score) >= threshold:
+            return label, color
+    return "数据不足", "gray"
+
+
+def _weighted_performance_summary(frame: pd.DataFrame) -> dict[str, float]:
+    """按日调用量汇总性能窗口，不生成额外估算数据。"""
+    columns = [
+        "performance_score",
+        "latency_score",
+        "stability_score",
+        "p50_latency_ms",
+        "p95_latency_ms",
+        "p99_latency_ms",
+    ]
+    summary: dict[str, float] = {}
+    for column in columns:
+        valid = frame.dropna(subset=[column])
+        if valid.empty:
+            summary[column] = np.nan
+            continue
+        weights = valid["request_count"].clip(lower=1)
+        summary[column] = float(np.average(valid[column], weights=weights))
+    return summary
+
+
+def _weighted_cost_summary(frame: pd.DataFrame) -> dict[str, float]:
+    """按日调用量汇总成本窗口，保留现有价格与质量口径。"""
+    columns = [
+        "cost_performance_score",
+        "cost_efficiency_score",
+        "quality_score",
+        "cost_per_request",
+        "cost_per_1k_tokens",
+        "cost_trend_ratio",
+    ]
+    summary: dict[str, float] = {}
+    for column in columns:
+        valid = frame.dropna(subset=[column])
+        if valid.empty:
+            summary[column] = np.nan
+            continue
+        weights = valid["request_count"].clip(lower=1)
+        summary[column] = float(np.average(valid[column], weights=weights))
+    return summary
+
+
+def _score_change_text(
+    current: float,
+    previous: float,
+    compare_previous: bool,
+) -> tuple[str, str]:
+    if not compare_previous:
+        return "未开启周期对比", "gray"
+    if pd.isna(previous):
+        return "上一周期数据不足", "gray"
+    change = current - previous
+    color = "green" if change > 0 else "red" if change < 0 else "gray"
+    return f"较上一周期 {change:+.1f} 分", color
+
+
+def _latency_comparison_text(
+    value: float,
+    reference: float,
+    reference_model: str,
+) -> str:
+    gap = value - reference
+    direction = "慢" if gap > 0 else "快" if gap < 0 else "相当"
+    magnitude = abs(gap)
+    amount = f"{magnitude / 1_000:.1f} 秒" if magnitude >= 1_000 else f"{magnitude:,.0f} 毫秒"
+    if direction == "相当":
+        return f"与 {reference_model} 基本相当"
+    return f"比 {reference_model} {direction} {amount}"
+
+
 def _confidence_band(score: float) -> str:
     """将画像可信度转成便于阅读的展示档位，不改变底层评分。"""
     if score >= 85:
@@ -254,6 +390,63 @@ def _line_chart(
     )
 
 
+def _health_gauge(score: float, color: str) -> alt.LayerChart:
+    """紧凑环形健康仪表盘；颜色表达状态，中心数字表达绝对分。"""
+    gauge_data = pd.DataFrame(
+        {
+            "segment": ["当前健康", "剩余空间"],
+            "value": [score, max(0.0, 100.0 - score)],
+        }
+    )
+    arc = (
+        alt.Chart(gauge_data)
+        .mark_arc(innerRadius=55, outerRadius=68, cornerRadius=8)
+        .encode(
+            theta=alt.Theta("value:Q", stack=True),
+            color=alt.Color(
+                "segment:N",
+                scale=alt.Scale(
+                    domain=["当前健康", "剩余空间"],
+                    range=[color, "#EEF2F6"],
+                ),
+                legend=None,
+            ),
+            order=alt.Order("segment:N", sort="ascending"),
+            tooltip=[
+                alt.Tooltip("segment:N", title="指标"),
+                alt.Tooltip("value:Q", title="分值", format=".1f"),
+            ],
+        )
+    )
+    score_text = (
+        alt.Chart(pd.DataFrame({"label": [f"{score:.1f}"]}))
+        .mark_text(fontSize=42, fontWeight=700, color="#172B4D")
+        .encode(text="label:N")
+    )
+    return (arc + score_text).properties(height=165)
+
+
+def _health_trend_chart(frame: pd.DataFrame, color: str) -> alt.Chart:
+    """低干扰健康趋势图，保留悬浮日期与分值。"""
+    return (
+        alt.Chart(frame)
+        .mark_area(
+            line={"color": color, "strokeWidth": 2},
+            color=color,
+            opacity=0.10,
+        )
+        .encode(
+            x=alt.X("date:T", axis=None),
+            y=alt.Y("health_score:Q", axis=None, scale=alt.Scale(zero=False)),
+            tooltip=[
+                alt.Tooltip("date:T", title="日期", format="%Y-%m-%d"),
+                alt.Tooltip("health_score:Q", title="健康指数", format=".1f"),
+            ],
+        )
+        .properties(height=72)
+    )
+
+
 def _section(title: str, caption: str) -> None:
     st.subheader(title)
     st.caption(caption)
@@ -280,7 +473,7 @@ def _overview_window(
     window_label: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """在全局日期范围内应用总览页的快捷观察窗口。"""
-    window_days = {"近 7 天": 7, "近 30 天": 30}
+    window_days = {"近 1 天": 1, "近 7 天": 7, "近 30 天": 30}
     days = window_days.get(window_label)
     if days is None:
         return logs.copy(), operating.copy()
@@ -294,8 +487,16 @@ def _overview_window(
         return logs.copy(), operating.copy()
 
     window_start = max(latest_candidates) - pd.Timedelta(days=days - 1)
-    visible_logs = logs[logs["timestamp"].ge(window_start)].copy()
-    visible_operating = operating[operating["date"].ge(window_start)].copy()
+    visible_logs = (
+        logs[logs["timestamp"].ge(window_start)].copy()
+        if "timestamp" in logs.columns
+        else logs.copy()
+    )
+    visible_operating = (
+        operating[operating["date"].ge(window_start)].copy()
+        if "date" in operating.columns
+        else operating.copy()
+    )
     return visible_logs, visible_operating
 
 
@@ -310,6 +511,24 @@ def _render_decision_summary(
 
     weights = latest["request_count"].clip(lower=1)
     overall_health = float(np.average(latest["health_score"], weights=weights))
+    previous_rows = operating[operating["date"] < latest["date"].min()]
+    previous = _latest_by_model(previous_rows)
+    previous_health = (
+        float(np.average(previous["health_score"], weights=previous["request_count"].clip(lower=1)))
+        if not previous.empty else np.nan
+    )
+    health_daily = (
+        operating.groupby("date", as_index=False)
+        .apply(lambda group: pd.Series({
+            "health_score": np.average(group["health_score"], weights=group["request_count"].clip(lower=1))
+        }), include_groups=False)
+        .reset_index(drop=True)
+    )
+    component_scores = {
+        "成功率": float(np.average(latest["success_score"], weights=weights)),
+        "性能": float(np.average(latest["performance_score"], weights=weights)),
+        "成本": float(np.average(latest["cost_efficiency_score"], weights=weights)),
+    }
     weakest = latest.sort_values("health_score").iloc[0]
     risk_components = {
         "success_score": "成功率",
@@ -327,51 +546,111 @@ def _render_decision_summary(
 
     if overall_health >= 85:
         status = "运行良好"
+        gauge_color = "#12B76A"
     elif overall_health >= 75:
         status = "需要关注"
+        gauge_color = "#F79009"
     else:
         status = "高风险"
-
-    summary = st.container(horizontal=True, horizontal_alignment="distribute", gap="small")
-    summary.metric("整体状态", status, f"健康指数 {overall_health:.1f}", border=True)
-    summary.metric(
-        "优先关注",
-        str(weakest["model_id"]),
-        f"健康指数 {weakest['health_score']:.1f}",
-        delta_color="inverse",
-        border=True,
-    )
-    summary.metric(
-        "主要风险信号",
-        risk_components[primary_risk_column],
-        f"评分 {weakest[primary_risk_column]:.1f}",
-        delta_color="inverse",
-        border=True,
-    )
-    if best_route is not None:
-        summary.metric(
-            "首选路由候选",
-            str(best_route["model_id"]),
-            f"路由评分 {best_route['routing_readiness_score']:.1f}",
-            border=True,
-        )
+        gauge_color = "#D92D20"
 
     weakest_health = float(weakest["health_score"])
     if weakest_health < 75:
-        st.warning(
-            f"建议降低 **{weakest['model_id']}** 的路由权重，并优先切换到健康度更高的候选模型。",
-            icon=":material/warning:",
-        )
+        action_title = f"降低 {weakest['model_id']} 的路由权重"
+        action_detail = "优先把新增流量切换到健康度更高的候选模型。"
+        badge_color = "orange"
     elif weakest_health < 85:
-        st.info(
-            f"建议重点观察 **{weakest['model_id']}** 的延迟与成功率；目前可以继续使用，但暂不扩大流量。",
-            icon=":material/monitoring:",
-        )
+        action_title = f"重点观察 {weakest['model_id']}"
+        action_detail = "继续使用但暂不扩大流量，重点跟踪延迟与成功率。"
+        badge_color = "orange"
     else:
-        st.success(
-            "当前模型均处于健康区间，建议维持现有路由，并继续观察延迟和成本趋势。",
-            icon=":material/check_circle:",
-        )
+        action_title = "维持当前路由策略"
+        action_detail = "所有模型均处于健康区间，继续观察延迟与成本趋势。"
+        badge_color = "green"
+
+    status_col, action_col, breakdown_col = st.columns(
+        [25, 45, 30],
+        gap="medium",
+        vertical_alignment="top",
+    )
+    with status_col:
+        with st.container(border=True, height=430, key="health_core"):
+            st.caption("模型总体健康指数")
+            st.altair_chart(
+                _health_gauge(overall_health, gauge_color),
+                width="stretch",
+                theme=None,
+            )
+            delta = overall_health - previous_health if pd.notna(previous_health) else np.nan
+            if pd.notna(delta):
+                delta_color = "green" if delta >= 0 else "red"
+                delta_direction = "上升" if delta >= 0 else "下降"
+                st.badge(
+                    f"较上日{delta_direction} {abs(delta):.1f} 分",
+                    icon=":material/trending_up:" if delta >= 0 else ":material/trending_down:",
+                    color=delta_color,
+                )
+            st.altair_chart(
+                _health_trend_chart(health_daily, gauge_color),
+                width="stretch",
+                theme=None,
+            )
+    with action_col:
+        with st.container(border=True, height=430, key="health_action"):
+            st.caption("风险分析与推荐动作")
+            st.badge(
+                status,
+                icon=":material/warning:" if badge_color == "orange" else ":material/check_circle:",
+                color=badge_color,
+            )
+            st.markdown(f"### {action_title}")
+            st.write(action_detail)
+            st.space("small")
+            st.markdown("**判断依据**")
+            evidence_tags = st.container(horizontal=True, gap="small")
+            evidence_tags.badge(
+                f"{risk_components[primary_risk_column]}评分 "
+                f"{float(weakest[primary_risk_column]):.1f}",
+                color="orange",
+            )
+            if best_route is not None:
+                evidence_tags.badge(
+                    f"候选模型 {best_route['model_id']}",
+                    color="blue",
+                )
+                evidence_tags.badge(
+                    f"路由评分 {float(best_route['routing_readiness_score']):.1f}",
+                    color="blue",
+                )
+            st.caption(f"风险模型：{weakest['model_id']} · 建议结合实时流量与容量余量执行。")
+    with breakdown_col:
+        with st.container(border=True, height=430, key="health_breakdown"):
+            st.caption("评分拆解与指标贡献")
+            weakest_component = min(component_scores, key=component_scores.get)
+            score_help = {
+                "成功率": "业务调用成功率相对 99% 目标的得分，健康权重 35%。",
+                "性能": "延迟评分 70% + 稳定性评分 30%，健康权重 50%。",
+                "成本": "单请求成本、千 Token 成本与成本趋势综合得分，健康权重 15%。",
+            }
+            contribution_weights = {"成功率": 35, "性能": 50, "成本": 15}
+            for label, score in component_scores.items():
+                with st.container(border=True, key=f"health_score_{label}"):
+                    score_row = st.container(
+                        horizontal=True,
+                        horizontal_alignment="distribute",
+                        vertical_alignment="center",
+                    )
+                    score_row.metric(
+                        f"{label}评分",
+                        f"{score:.1f}",
+                        help=score_help[label],
+                    )
+                    if label == weakest_component:
+                        score_row.badge("当前短板", color="orange")
+                    st.progress(
+                        min(1.0, max(0.0, score / 100.0)),
+                        text=f"健康指数贡献权重：{contribution_weights[label]}%",
+                    )
 
 
 def _render_capacity_reference(benchmarks: pd.DataFrame) -> None:
@@ -494,33 +773,32 @@ def render_overview(
     logs: pd.DataFrame,
     operating: pd.DataFrame,
     profiles: pd.DataFrame,
-    external_benchmarks: pd.DataFrame,
+    overall_operating: pd.DataFrame,
+    overall_profiles: pd.DataFrame,
 ) -> None:
-    _section(
-        "运营总览",
-        "AI 中台运营驾驶舱：用真实调用指标与模型健康指数统一观察规模、质量、性能和成本。",
-    )
-    st.caption("数据口径：调用与成本为真实资源基线校准后的模拟数据；外部容量和资源数据为真实来源。")
+    st.subheader("运营总览")
     if logs.empty or operating.empty:
         st.info("当前筛选范围没有运营数据。")
         return
 
-    controls = st.container(horizontal=True, gap="small", vertical_alignment="bottom")
-    window_label = controls.segmented_control(
+    summary_header = st.container(
+        horizontal=True,
+        horizontal_alignment="distribute",
+        vertical_alignment="center",
+    )
+    summary_header.subheader("今日决策摘要")
+    window_label = summary_header.segmented_control(
         "观察窗口",
-        ["近 7 天", "近 30 天", "全部"],
+        ["近 1 天", "近 7 天", "近 30 天", "全部"],
         default="近 7 天",
         required=True,
         key="overview_window",
-    )
-    trend_label = controls.segmented_control(
-        "趋势指标",
-        ["健康指数", "成功率", "P95 延迟", "单次成本"],
-        default="健康指数",
-        required=True,
-        key="overview_trend_metric",
+        label_visibility="collapsed",
     )
     logs, operating = _overview_window(logs, operating, str(window_label))
+    _, summary_operating = _overview_window(
+        pd.DataFrame(), overall_operating, str(window_label)
+    )
     if logs.empty or operating.empty:
         st.info("当前快捷观察窗口没有运营数据。")
         return
@@ -534,41 +812,25 @@ def render_overview(
     )
     daily["success_rate"] *= 100
     latest = _latest_by_model(operating)
-    weights = latest["request_count"].clip(lower=1)
-    health = float(np.average(latest["health_score"], weights=weights))
-    previous_rows = operating[operating["date"] < latest["date"].min()]
-    previous = _latest_by_model(previous_rows)
-    previous_health = (
-        float(np.average(previous["health_score"], weights=previous["request_count"].clip(lower=1)))
-        if not previous.empty else np.nan
-    )
-    health_daily = (
-        operating.groupby("date", as_index=False)
-        .apply(lambda group: pd.Series({
-            "health_score": np.average(group["health_score"], weights=group["request_count"].clip(lower=1))
-        }), include_groups=False)
-        .reset_index(drop=True)
-    )
-    _section("今日决策摘要", "先给出结论，再查看支撑结论的指标和明细。")
-    _render_decision_summary(operating, profiles)
+    _render_decision_summary(summary_operating, overall_profiles)
 
     _metric_row([
-        {"label": "调用量", "value": f"{len(logs):,}", "chart_data": daily["request_count"].tolist()},
-        {"label": "Token", "value": f"{int(logs['total_tokens'].sum()):,}", "chart_data": daily["total_tokens"].tolist()},
-        {"label": "估算成本", "value": f"¥{logs['estimated_cost'].sum():,.2f}", "chart_data": daily["estimated_cost"].tolist(), "delta_color": "inverse"},
-        {"label": "成功率", "value": f"{logs['is_success'].mean() * 100:.2f}%", "chart_data": daily["success_rate"].tolist()},
-        {"label": "P95 延迟", "value": f"{logs['latency_ms'].quantile(.95):,.0f} ms", "chart_data": daily["p95_latency_ms"].tolist(), "delta_color": "inverse"},
-        {
-            "label": "模型健康指数",
-            "value": f"{health:.1f}",
-            "delta": _fmt_delta(health, previous_health, " 分"),
-            "chart_data": health_daily["health_score"].tolist(),
-            "help": "成功率 35% + 性能 25% + 稳定性 25% + 成本效率 15%，权重来自指标字典。",
-        },
+        {"label": "调用量", "value": f"{len(logs):,}"},
+        {"label": "Token", "value": f"{int(logs['total_tokens'].sum()):,}"},
+        {"label": "估算成本", "value": f"¥{logs['estimated_cost'].sum():,.2f}"},
+        {"label": "成功率", "value": f"{logs['is_success'].mean() * 100:.2f}%"},
+        {"label": "P95 延迟", "value": f"{logs['latency_ms'].quantile(.95):,.0f} ms"},
     ])
 
     left, right = st.columns([1.45, 1], gap="large")
     with left:
+        trend_label = st.segmented_control(
+            "选择下方趋势图的指标",
+            ["健康指数", "成功率", "P95 延迟", "单次成本"],
+            default="健康指数",
+            required=True,
+            key="overview_trend_metric",
+        )
         trend_specs = {
             "健康指数": ("health_score", "健康指数", ".1f"),
             "成功率": ("success_rate", "成功率（%）", ".2f"),
@@ -598,21 +860,29 @@ def render_overview(
         profile_cols = profiles[["model_id", "recommended_role", "routing_action"]] if not profiles.empty else pd.DataFrame()
         if not profile_cols.empty:
             ranking = ranking.merge(profile_cols, on="model_id", how="left")
+        ranking_style = ranking.style.map(
+            lambda value: (
+                "background-color: #dcfce7; color: #166534; font-weight: 700;"
+                if float(value) >= 85
+                else "background-color: #fef3c7; color: #92400e; font-weight: 700;"
+                if float(value) >= 75
+                else "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
+            ),
+            subset=["health_score"],
+        )
         st.dataframe(
-            ranking,
+            ranking_style,
             column_order=["健康排名", "model_id", "health_score", "health_level", "recommended_role"],
             column_config={
                 "健康排名": st.column_config.NumberColumn("排名", format="#%d"),
                 "model_id": "模型",
-                "health_score": st.column_config.ProgressColumn("健康指数", min_value=0, max_value=100, format="%.1f"),
+                "health_score": st.column_config.NumberColumn("健康指数", format="%.1f"),
                 "health_level": "健康等级",
                 "recommended_role": "路由角色",
             },
             hide_index=True,
             height=290,
         )
-
-    _render_capacity_reference(external_benchmarks)
 
     st.markdown("#### 健康评分构成")
     score_table = latest.sort_values("health_score", ascending=False)
@@ -627,7 +897,7 @@ def render_overview(
             "success_score": st.column_config.NumberColumn("成功率评分", format="%.1f"),
             "performance_score": st.column_config.NumberColumn("性能评分", format="%.1f"),
             "stability_score": st.column_config.NumberColumn("稳定性评分", format="%.1f"),
-            "cost_efficiency_score": st.column_config.NumberColumn("成本效率评分", format="%.1f"),
+            "cost_efficiency_score": st.column_config.NumberColumn("成本评分", format="%.1f"),
             "health_score": st.column_config.ProgressColumn("健康指数", min_value=0, max_value=100, format="%.1f"),
             "request_count": st.column_config.NumberColumn("当日调用量", format="%d"),
         },
@@ -638,27 +908,141 @@ def render_overview(
 def render_performance(operating: pd.DataFrame) -> None:
     _section(
         "性能诊断",
-        "模型性能画像：同时观察典型延迟、尾部延迟、日内波动和稳定性，输出可比较的性能评分。",
+        "查看模型的响应速度、稳定性和异常情况。",
     )
-    st.caption("数据口径：模型名称与 TTFT 基线来自真实资源数据；请求级延迟历史为校准后的模拟数据。")
+    with st.expander("数据说明", icon=":material/info:"):
+        st.caption(
+            "模型名称与 TTFT 基线来自真实资源数据；"
+            "请求级延迟历史为基于真实基线校准的模拟数据。"
+        )
+        st.caption("页面评分为日级聚合结果，不代表单次请求的保证值。")
     if operating.empty:
-        st.info("当前筛选范围没有性能数据。")
+        st.info(
+            "当前筛选范围没有性能数据，请调整全局日期或模型筛选。",
+            icon=":material/info:",
+        )
         return
-    model = st.selectbox("诊断模型", sorted(operating["model_id"].unique()), key="performance_model")
-    selected = operating[operating["model_id"].eq(model)].sort_values("date")
-    latest = selected.iloc[-1]
-    prior = selected.iloc[-2] if len(selected) > 1 else None
-    _metric_row([
-        {"label": "P50 延迟", "value": f"{latest['p50_latency_ms']:,.0f} ms", "delta": _fmt_delta(latest["p50_latency_ms"], prior["p50_latency_ms"] if prior is not None else np.nan, " ms"), "delta_color": "inverse", "chart_data": selected["p50_latency_ms"].tolist()},
-        {"label": "P95 延迟", "value": f"{latest['p95_latency_ms']:,.0f} ms", "delta": _fmt_delta(latest["p95_latency_ms"], prior["p95_latency_ms"] if prior is not None else np.nan, " ms"), "delta_color": "inverse", "chart_data": selected["p95_latency_ms"].tolist()},
-        {"label": "P99 延迟", "value": f"{latest['p99_latency_ms']:,.0f} ms", "delta": _fmt_delta(latest["p99_latency_ms"], prior["p99_latency_ms"] if prior is not None else np.nan, " ms"), "delta_color": "inverse", "chart_data": selected["p99_latency_ms"].tolist()},
-        {"label": "延迟变异系数", "value": f"{latest['latency_cv'] * 100:.1f}%", "help": "P95 日内标准差 ÷ P95 日内均值；越低越稳定。", "chart_data": (selected["latency_cv"] * 100).tolist(), "delta_color": "inverse"},
-        {"label": "稳定性评分", "value": f"{latest['stability_score']:.1f}", "chart_data": selected["stability_score"].tolist()},
-        {"label": "模型性能评分", "value": f"{latest['performance_score']:.1f}", "help": "延迟评分 70% + 稳定性评分 30%。", "chart_data": selected["performance_score"].tolist()},
-    ])
 
-    latency = selected.melt(
-        id_vars="date",
+    models = sorted(operating["model_id"].dropna().unique())
+    controls = st.container(horizontal=True, gap="small", vertical_alignment="bottom")
+    model = controls.selectbox("诊断模型", models, key="performance_model", width=260)
+    window_label = controls.segmented_control(
+        "时间范围",
+        ["过去 7 天", "过去 30 天", "过去 90 天"],
+        default="过去 30 天",
+        required=True,
+        key="performance_window",
+    )
+    compare_options: list[str | None] = [None] + [item for item in models if item != model]
+    compare_model = controls.selectbox(
+        "添加对比模型",
+        compare_options,
+        format_func=lambda value: "不对比" if value is None else str(value),
+        key="performance_compare_model",
+        width=260,
+        disabled=len(compare_options) == 1,
+        help=(
+            "从当前全局筛选中选择第二个模型。"
+            if len(compare_options) > 1
+            else "当前只有一个模型，请先在全局筛选中加入其他模型。"
+        ),
+    )
+    compare_previous = controls.toggle(
+        "与上一周期对比",
+        value=True,
+        key="performance_compare_previous",
+    )
+
+    window_days = {"过去 7 天": 7, "过去 30 天": 30, "过去 90 天": 90}
+    days = window_days[str(window_label)]
+    model_history = operating[operating["model_id"].eq(model)].sort_values("date")
+    latest_date = pd.Timestamp(model_history["date"].max()).normalize()
+    window_start = latest_date - pd.Timedelta(days=days - 1)
+    previous_end = window_start - pd.Timedelta(days=1)
+    previous_start = previous_end - pd.Timedelta(days=days - 1)
+    selected = model_history[model_history["date"].between(window_start, latest_date)].copy()
+    previous = model_history[model_history["date"].between(previous_start, previous_end)].copy()
+    if selected.empty:
+        st.info("所选时间范围没有可用性能数据。", icon=":material/info:")
+        return
+
+    current_summary = _weighted_performance_summary(selected)
+    previous_summary = _weighted_performance_summary(previous)
+    peer_window = operating[operating["date"].between(window_start, latest_date)]
+    peer_latest = _latest_by_model(peer_window)
+    peer_scores = peer_latest.loc[peer_latest["model_id"].ne(model), "latency_score"]
+    peer_average = float(peer_scores.mean()) if not peer_scores.empty else np.nan
+    observed_days = int(selected["date"].nunique())
+
+    stability_level, _ = _performance_score_level(current_summary["stability_score"])
+    weakest_label = (
+        "响应速度"
+        if current_summary["latency_score"] <= current_summary["stability_score"]
+        else "稳定性"
+    )
+    experience_explanation = (
+        "主要短板：响应速度较慢"
+        if weakest_label == "响应速度"
+        else "主要短板：稳定性需关注"
+    )
+    if pd.isna(peer_average):
+        response_explanation = "当前筛选范围暂无其他模型基线"
+    else:
+        peer_gap = current_summary["latency_score"] - peer_average
+        response_explanation = (
+            f"高于同窗口模型平均 {peer_gap:.1f} 分"
+            if peer_gap >= 0
+            else f"低于同窗口模型平均 {abs(peer_gap):.1f} 分"
+        )
+    stability_explanation = (
+        f"所选窗口内 {observed_days} 天整体表现稳定"
+        if stability_level in {"优秀", "良好"}
+        else f"所选窗口内 {observed_days} 天的波动偏大"
+    )
+    conclusions = [
+        ("综合体验", current_summary["performance_score"], experience_explanation, "performance_score"),
+        ("响应速度", current_summary["latency_score"], response_explanation, "latency_score"),
+        ("稳定性", current_summary["stability_score"], stability_explanation, "stability_score"),
+    ]
+    conclusion_cols = st.columns(3, gap="medium")
+    for column, (title, score, explanation, score_column) in zip(conclusion_cols, conclusions):
+        level, color = _performance_score_level(score)
+        change_text, change_color = _score_change_text(
+            score,
+            previous_summary[score_column],
+            compare_previous,
+        )
+        with column.container(border=True, height=230):
+            title_row = st.container(
+                horizontal=True,
+                horizontal_alignment="distribute",
+                vertical_alignment="center",
+            )
+            title_row.markdown(f"**{title}**")
+            title_row.badge(level, color=color)
+            st.markdown(f"## {score:.0f} / 100")
+            st.caption(explanation)
+            st.badge(change_text, color=change_color)
+
+    attention_days = selected[
+        selected["latency_score"].lt(40) | selected["stability_score"].lt(40)
+    ]
+    if attention_days.empty:
+        st.caption("所选窗口内未出现响应速度或稳定性评分低于 40 的性能日。")
+    else:
+        st.warning(
+            f"所选窗口内有 {attention_days['date'].nunique()} 天需重点关注，"
+            "请在趋势图和技术指标中查看详情。",
+            icon=":material/warning:",
+        )
+
+    chart_models = [str(model)] + ([str(compare_model)] if compare_model is not None else [])
+    chart_source = operating[
+        operating["model_id"].isin(chart_models)
+        & operating["date"].between(window_start, latest_date)
+    ].copy()
+    latency = chart_source.melt(
+        id_vars=["date", "model_id"],
         value_vars=["p50_latency_ms", "p95_latency_ms", "p99_latency_ms"],
         var_name="percentile",
         value_name="latency_ms",
@@ -666,6 +1050,7 @@ def render_performance(operating: pd.DataFrame) -> None:
     latency["percentile"] = latency["percentile"].map({
         "p50_latency_ms": "P50", "p95_latency_ms": "P95", "p99_latency_ms": "P99"
     })
+    latency["序列"] = latency["model_id"] + " · " + latency["percentile"]
     left, right = st.columns([1.5, 1], gap="large")
     with left:
         st.markdown("#### 延迟分位数趋势")
@@ -673,72 +1058,227 @@ def render_performance(operating: pd.DataFrame) -> None:
             latency,
             "date",
             "latency_ms",
-            "percentile",
+            "序列",
             "延迟（ms）",
-            [alt.Tooltip("date:T", title="日期", format="%Y-%m-%d"), alt.Tooltip("percentile:N", title="分位数"), alt.Tooltip("latency_ms:Q", title="延迟", format=",.0f")],
+            [alt.Tooltip("date:T", title="日期", format="%Y-%m-%d"), alt.Tooltip("model_id:N", title="模型"), alt.Tooltip("percentile:N", title="分位数"), alt.Tooltip("latency_ms:Q", title="延迟", format=",.0f")],
         )
         st.altair_chart(chart, width="stretch")
     with right:
         st.markdown("#### 波动与稳定性")
-        stability = selected[["date", "stability_score", "performance_score"]].melt(
-            "date", var_name="metric", value_name="score"
+        stability = chart_source[["date", "model_id", "stability_score", "performance_score"]].melt(
+            ["date", "model_id"], var_name="metric", value_name="score"
         )
-        stability["metric"] = stability["metric"].map({"stability_score": "稳定性", "performance_score": "性能"})
+        stability["metric"] = stability["metric"].map({"stability_score": "稳定性", "performance_score": "综合体验"})
+        stability["序列"] = stability["model_id"] + " · " + stability["metric"]
         chart = _line_chart(
             stability,
             "date",
             "score",
-            "metric",
+            "序列",
             "评分",
-            [alt.Tooltip("date:T", title="日期", format="%Y-%m-%d"), alt.Tooltip("metric:N", title="指标"), alt.Tooltip("score:Q", title="评分", format=".1f")],
+            [alt.Tooltip("date:T", title="日期", format="%Y-%m-%d"), alt.Tooltip("model_id:N", title="模型"), alt.Tooltip("metric:N", title="指标"), alt.Tooltip("score:Q", title="评分", format=".1f")],
         )
         st.altair_chart(chart, width="stretch")
 
-    st.markdown("#### 模型性能横向评分")
-    latest_all = _latest_by_model(operating).sort_values("performance_score", ascending=False)
-    st.dataframe(
-        latest_all,
-        column_order=["model_id", "p50_latency_ms", "p95_latency_ms", "p99_latency_ms", "latency_cv", "stability_score", "performance_score"],
-        column_config={
-            "model_id": "模型",
-            "p50_latency_ms": st.column_config.NumberColumn("P50（ms）", format="%,.0f"),
-            "p95_latency_ms": st.column_config.NumberColumn("P95（ms）", format="%,.0f"),
-            "p99_latency_ms": st.column_config.NumberColumn("P99（ms）", format="%,.0f"),
-            "latency_cv": st.column_config.NumberColumn("延迟 CV", format="%.3f"),
-            "stability_score": st.column_config.ProgressColumn("稳定性评分", min_value=0, max_value=100, format="%.1f"),
-            "performance_score": st.column_config.ProgressColumn("性能评分", min_value=0, max_value=100, format="%.1f"),
-        },
-        hide_index=True,
-    )
+    if compare_model is not None:
+        comparison = operating[
+            operating["model_id"].eq(compare_model)
+            & operating["date"].between(window_start, latest_date)
+        ]
+        if comparison.empty:
+            st.info("对比模型在所选窗口内没有数据。", icon=":material/info:")
+        else:
+            comparison_summary = _weighted_performance_summary(comparison)
+            p99_change = (
+                (current_summary["p99_latency_ms"] / comparison_summary["p99_latency_ms"] - 1) * 100
+                if comparison_summary["p99_latency_ms"]
+                else np.nan
+            )
+            stability_gap = current_summary["stability_score"] - comparison_summary["stability_score"]
+            experience_gap = current_summary["performance_score"] - comparison_summary["performance_score"]
+            with st.container(border=True):
+                st.markdown(f"#### 与 {compare_model} 对比")
+                comparison_cols = st.columns(2, gap="medium")
+                with comparison_cols[0]:
+                    st.markdown(
+                        f"**典型响应时间**　"
+                        f"{_latency_comparison_text(current_summary['p50_latency_ms'], comparison_summary['p50_latency_ms'], str(compare_model))}"
+                    )
+                    st.markdown(
+                        f"**95% 请求响应时间**　"
+                        f"{_latency_comparison_text(current_summary['p95_latency_ms'], comparison_summary['p95_latency_ms'], str(compare_model))}"
+                    )
+                    p99_direction = "降低" if p99_change < 0 else "增加" if p99_change > 0 else "持平"
+                    st.markdown(f"**极端响应时间**　较 {compare_model} {p99_direction} {abs(p99_change):.1f}%")
+                with comparison_cols[1]:
+                    stability_direction = "高" if stability_gap > 0 else "低" if stability_gap < 0 else "持平"
+                    experience_direction = "高" if experience_gap > 0 else "低" if experience_gap < 0 else "持平"
+                    st.markdown(f"**稳定性**　较 {compare_model} {stability_direction} {abs(stability_gap):.1f} 分")
+                    st.markdown(f"**综合体验**　较 {compare_model} {experience_direction} {abs(experience_gap):.1f} 分")
+                    st.caption("对比值按所选窗口内日调用量加权，并非单次请求测试。")
+
+    latest = selected.iloc[-1]
+    with st.expander("展开技术指标", icon=":material/monitoring:"):
+        st.markdown("**原始延迟值**")
+        _metric_row([
+            {"label": "P50", "value": f"{latest['p50_latency_ms']:,.0f} ms", "help": "50% 请求在该时间内完成。"},
+            {"label": "P95", "value": f"{latest['p95_latency_ms']:,.0f} ms", "help": "95% 请求在该时间内完成。"},
+            {"label": "P99", "value": f"{latest['p99_latency_ms']:,.0f} ms", "help": "99% 请求在该时间内完成，用于观察极端慢请求。"},
+        ])
+        st.markdown("**分数计算方式**")
+        st.caption(
+            "响应速度评分由 P50、P95、P99 按指标字典的分段归一化和权重汇总；"
+            "综合体验评分 = 响应速度评分 × 70% + 稳定性评分 × 30%。"
+        )
+        detail_cols = st.columns(2, gap="large")
+        with detail_cols[0]:
+            st.markdown("**数据采样周期**")
+            st.caption("请求级数据按日汇总；稳定性基于日内小时级 P95 波动与成功率波动计算。")
+            st.markdown("**基线来源**")
+            st.caption("模型名称与 TTFT 基线来自真实资源观测；请求延迟历史为基线校准后的模拟数据。")
+        with detail_cols[1]:
+            st.markdown("**异常判断方式**")
+            st.caption("本页将响应速度或稳定性评分低于 40 的性能日标记为需重点关注；正式异常告警由检测模块独立生成。")
+            st.markdown("**校准说明**")
+            st.caption("校准用于使模拟请求的延迟量级贴近真实资源基线，不会将模拟请求标记为真实生产流量。")
+        st.download_button(
+            "下载当前窗口原始数据",
+            chart_source.sort_values(["model_id", "date"]).to_csv(index=False).encode("utf-8-sig"),
+            f"performance_raw_{model}_{window_start:%Y%m%d}_{latest_date:%Y%m%d}.csv",
+            "text/csv",
+            key="download_performance_raw",
+            icon=":material/download:",
+        )
 
 
 def render_cost(operating: pd.DataFrame) -> None:
     _section(
         "成本分析",
-        "模型成本效率分析：比较单请求成本、Token 成本、趋势偏移和质量/成本综合表现。",
+        "查看模型的使用成本、质量表现和投入产出效率。",
     )
-    st.warning("当前没有真实账单数据，本页金额均为模拟价格假设，只用于演示相对成本趋势。", icon=":material/info:")
+    with st.expander("数据说明", icon=":material/info:"):
+        st.caption("当前没有真实账单数据，本页金额均为模拟价格假设，只用于相对成本趋势和模型间比较。")
+        st.caption("质量评分来自同一套标准能力任务，不是根据价格反推的数据。")
     if operating.empty:
-        st.info("当前筛选范围没有成本数据。")
+        st.info(
+            "当前筛选范围没有成本数据，请调整全局日期或模型筛选。",
+            icon=":material/info:",
+        )
         return
-    model = st.selectbox("成本分析模型", sorted(operating["model_id"].unique()), key="cost_model")
-    selected = operating[operating["model_id"].eq(model)].sort_values("date")
-    latest = selected.iloc[-1]
-    trend_pct = (latest["cost_trend_ratio"] - 1) * 100
-    _metric_row([
-        {"label": "单请求成本", "value": f"¥{latest['cost_per_request']:.6f}", "chart_data": selected["cost_per_request"].tolist(), "delta_color": "inverse"},
-        {"label": "千 Token 成本", "value": f"¥{latest['cost_per_1k_tokens']:.6f}", "chart_data": selected["cost_per_1k_tokens"].tolist(), "delta_color": "inverse"},
-        {"label": "成本趋势", "value": f"{trend_pct:+.1f}%", "help": "当前单请求成本 ÷ 前 7 个历史日中位数 - 1；至少 3 个历史日后启用。", "chart_data": ((selected["cost_trend_ratio"] - 1) * 100).tolist(), "delta_color": "inverse"},
-        {"label": "质量评分", "value": f"{latest['quality_score']:.1f}", "chart_data": selected["quality_score"].tolist()},
-        {"label": "成本效率评分", "value": f"{latest['cost_efficiency_score']:.1f}", "chart_data": selected["cost_efficiency_score"].tolist()},
-        {"label": "成本性能评分", "value": f"{latest['cost_performance_score']:.1f}", "help": "质量评分 60% + 成本效率评分 40%，避免低价低质模型获得过高排名。", "chart_data": selected["cost_performance_score"].tolist()},
-    ])
+
+    models = sorted(operating["model_id"].dropna().unique())
+    controls = st.container(horizontal=True, gap="small", vertical_alignment="bottom")
+    model = controls.selectbox("成本分析模型", models, key="cost_model", width=260)
+    window_label = controls.segmented_control(
+        "时间范围",
+        ["过去 7 天", "过去 30 天", "过去 90 天"],
+        default="过去 30 天",
+        required=True,
+        key="cost_window",
+    )
+    compare_options: list[str | None] = [None] + [item for item in models if item != model]
+    compare_model = controls.selectbox(
+        "添加对比模型",
+        compare_options,
+        format_func=lambda value: "不对比" if value is None else str(value),
+        key="cost_compare_model",
+        width=260,
+        disabled=len(compare_options) == 1,
+        help=(
+            "从当前全局筛选中选择第二个模型。"
+            if len(compare_options) > 1
+            else "当前只有一个模型，请先在全局筛选中加入其他模型。"
+        ),
+    )
+    compare_previous = controls.toggle(
+        "与上一周期对比",
+        value=True,
+        key="cost_compare_previous",
+    )
+
+    window_days = {"过去 7 天": 7, "过去 30 天": 30, "过去 90 天": 90}
+    days = window_days[str(window_label)]
+    model_history = operating[operating["model_id"].eq(model)].sort_values("date")
+    latest_date = pd.Timestamp(model_history["date"].max()).normalize()
+    window_start = latest_date - pd.Timedelta(days=days - 1)
+    previous_end = window_start - pd.Timedelta(days=1)
+    previous_start = previous_end - pd.Timedelta(days=days - 1)
+    selected = model_history[model_history["date"].between(window_start, latest_date)].copy()
+    previous = model_history[model_history["date"].between(previous_start, previous_end)].copy()
+    if selected.empty:
+        st.info("所选时间范围没有可用成本数据。", icon=":material/info:")
+        return
+
+    current_summary = _weighted_cost_summary(selected)
+    previous_summary = _weighted_cost_summary(previous)
+    peer_window = operating[operating["date"].between(window_start, latest_date)]
+    peer_latest = _latest_by_model(peer_window)
+    peer_scores = peer_latest.loc[peer_latest["model_id"].ne(model), "cost_efficiency_score"]
+    peer_average = float(peer_scores.mean()) if not peer_scores.empty else np.nan
+    weakest_label = (
+        "成本效率"
+        if current_summary["cost_efficiency_score"] <= current_summary["quality_score"]
+        else "质量保障"
+    )
+    total_explanation = f"主要短板：{weakest_label}需关注"
+    if pd.isna(peer_average):
+        efficiency_explanation = "当前筛选范围暂无其他模型基线"
+    else:
+        peer_gap = current_summary["cost_efficiency_score"] - peer_average
+        efficiency_explanation = (
+            f"高于同窗口模型平均 {peer_gap:.1f} 分"
+            if peer_gap >= 0
+            else f"低于同窗口模型平均 {abs(peer_gap):.1f} 分"
+        )
+    quality_explanation = "来自统一标准能力任务的质量校准结果"
+    conclusions = [
+        ("成本总评分", current_summary["cost_performance_score"], total_explanation, "cost_performance_score"),
+        ("成本效率", current_summary["cost_efficiency_score"], efficiency_explanation, "cost_efficiency_score"),
+        ("质量保障", current_summary["quality_score"], quality_explanation, "quality_score"),
+    ]
+    conclusion_cols = st.columns(3, gap="medium")
+    for column, (title, score, explanation, score_column) in zip(conclusion_cols, conclusions):
+        level, color = _performance_score_level(score)
+        change_text, change_color = _score_change_text(
+            score,
+            previous_summary[score_column],
+            compare_previous,
+        )
+        with column.container(border=True, height=230):
+            title_row = st.container(
+                horizontal=True,
+                horizontal_alignment="distribute",
+                vertical_alignment="center",
+            )
+            title_row.markdown(f"**{title}**")
+            title_row.badge(level, color=color)
+            st.markdown(f"## {score:.0f} / 100")
+            st.caption(explanation)
+            st.badge(change_text, color=change_color)
+
+    attention_days = selected[
+        selected["cost_efficiency_score"].lt(40) | selected["quality_score"].lt(40)
+    ]
+    if attention_days.empty:
+        st.caption("所选窗口内未出现成本效率或质量评分低于 40 的成本日。")
+    else:
+        st.warning(
+            f"所选窗口内有 {attention_days['date'].nunique()} 天需重点关注，"
+            "请在趋势图和技术指标中查看详情。",
+            icon=":material/warning:",
+        )
+
+    chart_models = [str(model)] + ([str(compare_model)] if compare_model is not None else [])
+    chart_source = operating[
+        operating["model_id"].isin(chart_models)
+        & operating["date"].between(window_start, latest_date)
+    ].copy()
 
     left, right = st.columns([1.35, 1], gap="large")
     with left:
         st.markdown("#### 单请求成本趋势")
         chart = _line_chart(
-            operating,
+            chart_source,
             "date",
             "cost_per_request",
             "model_id",
@@ -748,36 +1288,88 @@ def render_cost(operating: pd.DataFrame) -> None:
         st.altair_chart(chart, width="stretch")
     with right:
         st.markdown("#### 质量—成本效率矩阵")
-        latest_all = _latest_by_model(operating)
+        latest_all = _latest_by_model(peer_window)
         chart = (
             alt.Chart(latest_all)
             .mark_circle(opacity=.86, stroke="white", strokeWidth=1.5)
             .encode(
-                x=alt.X("cost_efficiency_score:Q", title="成本效率评分", scale=alt.Scale(domain=[0, 100])),
+                x=alt.X("cost_efficiency_score:Q", title="成本评分", scale=alt.Scale(domain=[0, 100])),
                 y=alt.Y("quality_score:Q", title="质量评分", scale=alt.Scale(domain=[0, 100])),
                 size=alt.Size("request_count:Q", title="调用量", scale=alt.Scale(range=[300, 1200])),
                 color=alt.Color("model_id:N", title="模型"),
-                tooltip=[alt.Tooltip("model_id:N", title="模型"), alt.Tooltip("quality_score:Q", title="质量", format=".1f"), alt.Tooltip("cost_efficiency_score:Q", title="成本效率", format=".1f"), alt.Tooltip("cost_performance_score:Q", title="成本性能评分", format=".1f")],
+                tooltip=[alt.Tooltip("model_id:N", title="模型"), alt.Tooltip("quality_score:Q", title="质量", format=".1f"), alt.Tooltip("cost_efficiency_score:Q", title="成本效率", format=".1f"), alt.Tooltip("cost_performance_score:Q", title="成本总评分", format=".1f")],
             )
             .properties(height=330)
         )
         st.altair_chart(chart, width="stretch")
 
-    st.markdown("#### 模型成本效率排行")
-    st.dataframe(
-        _latest_by_model(operating).sort_values("cost_performance_score", ascending=False),
-        column_order=["model_id", "cost_per_request", "cost_per_1k_tokens", "cost_trend_ratio", "quality_score", "cost_efficiency_score", "cost_performance_score"],
-        column_config={
-            "model_id": "模型",
-            "cost_per_request": st.column_config.NumberColumn("单请求成本", format="¥%.6f"),
-            "cost_per_1k_tokens": st.column_config.NumberColumn("千 Token 成本", format="¥%.6f"),
-            "cost_trend_ratio": st.column_config.NumberColumn("历史基线倍数", format="%.3f×"),
-            "quality_score": st.column_config.NumberColumn("质量评分", format="%.1f"),
-            "cost_efficiency_score": st.column_config.NumberColumn("成本效率", format="%.1f"),
-            "cost_performance_score": st.column_config.ProgressColumn("成本性能评分", min_value=0, max_value=100, format="%.1f"),
-        },
-        hide_index=True,
-    )
+    if compare_model is not None:
+        comparison = operating[
+            operating["model_id"].eq(compare_model)
+            & operating["date"].between(window_start, latest_date)
+        ]
+        if comparison.empty:
+            st.info("对比模型在所选窗口内没有数据。", icon=":material/info:")
+        else:
+            comparison_summary = _weighted_cost_summary(comparison)
+            request_pct = (
+                (current_summary["cost_per_request"] / comparison_summary["cost_per_request"] - 1) * 100
+                if comparison_summary["cost_per_request"]
+                else np.nan
+            )
+            token_pct = (
+                (current_summary["cost_per_1k_tokens"] / comparison_summary["cost_per_1k_tokens"] - 1) * 100
+                if comparison_summary["cost_per_1k_tokens"]
+                else np.nan
+            )
+            quality_gap = current_summary["quality_score"] - comparison_summary["quality_score"]
+            efficiency_gap = current_summary["cost_efficiency_score"] - comparison_summary["cost_efficiency_score"]
+            total_gap = current_summary["cost_performance_score"] - comparison_summary["cost_performance_score"]
+            with st.container(border=True):
+                st.markdown(f"#### 与 {compare_model} 对比")
+                comparison_cols = st.columns(2, gap="medium")
+                with comparison_cols[0]:
+                    request_direction = "高" if request_pct > 0 else "低" if request_pct < 0 else "持平"
+                    token_direction = "高" if token_pct > 0 else "低" if token_pct < 0 else "持平"
+                    st.markdown(f"**单请求成本**　比 {compare_model} {request_direction} {abs(request_pct):.1f}%")
+                    st.markdown(f"**千 Token 成本**　比 {compare_model} {token_direction} {abs(token_pct):.1f}%")
+                with comparison_cols[1]:
+                    quality_direction = "高" if quality_gap > 0 else "低" if quality_gap < 0 else "持平"
+                    efficiency_direction = "高" if efficiency_gap > 0 else "低" if efficiency_gap < 0 else "持平"
+                    total_direction = "高" if total_gap > 0 else "低" if total_gap < 0 else "持平"
+                    st.markdown(f"**质量保障**　较 {compare_model} {quality_direction} {abs(quality_gap):.1f} 分")
+                    st.markdown(f"**成本效率**　较 {compare_model} {efficiency_direction} {abs(efficiency_gap):.1f} 分")
+                    st.markdown(f"**成本总评分**　较 {compare_model} {total_direction} {abs(total_gap):.1f} 分")
+
+    latest = selected.iloc[-1]
+    with st.expander("展开技术指标", icon=":material/monitoring:"):
+        st.markdown("**原始成本值**")
+        _metric_row([
+            {"label": "单请求成本", "value": f"¥{latest['cost_per_request']:.6f}", "help": "当日估算总成本 ÷ 请求量。"},
+            {"label": "千 Token 成本", "value": f"¥{latest['cost_per_1k_tokens']:.6f}", "help": "当日估算总成本 ÷ Token 总量 × 1,000。"},
+            {"label": "历史基线倍数", "value": f"{latest['cost_trend_ratio']:.3f}×", "help": "当前单请求成本相对历史基线的倍数。"},
+        ])
+        st.markdown("**分数计算方式**")
+        st.caption("成本效率评分综合单请求成本、千 Token 成本和成本趋势；成本总评分 = 质量评分 × 60% + 成本效率评分 × 40%。")
+        detail_cols = st.columns(2, gap="large")
+        with detail_cols[0]:
+            st.markdown("**数据采样周期**")
+            st.caption("请求、Token 和估算成本按日汇总，页面窗口按日调用量加权。")
+            st.markdown("**价格与基线来源**")
+            st.caption("金额使用项目模型目录中的模拟价格；成本趋势基线为前 7 个历史日单请求成本中位数，至少 3 个历史日后启用。")
+        with detail_cols[1]:
+            st.markdown("**质量校准方式**")
+            st.caption("同一能力维度内按标准任务权重汇总，再按有效运行次数加权成模型质量评分。")
+            st.markdown("**异常判断方式**")
+            st.caption("本页将成本效率或质量评分低于 40 的成本日标记为需重点关注，不将模拟金额解读为真实账单异常。")
+        st.download_button(
+            "下载当前窗口原始数据",
+            chart_source.sort_values(["model_id", "date"]).to_csv(index=False).encode("utf-8-sig"),
+            f"cost_raw_{model}_{window_start:%Y%m%d}_{latest_date:%Y%m%d}.csv",
+            "text/csv",
+            key="download_cost_raw",
+            icon=":material/download:",
+        )
 
 
 def render_calibration(
@@ -804,7 +1396,7 @@ def render_calibration(
         st.metric(
             "综合路由评分",
             f"{profile['routing_readiness_score']:.1f}",
-            help="能力 35% + 稳定性 20% + 性能 25% + 成本性能 20%。这是本页用于路由决策的主分。",
+            help="能力 35% + 稳定性 20% + 性能 25% + 成本总评分 20%。这是本页用于路由决策的主分。",
             border=True,
         )
     with decision_detail:
@@ -1628,7 +2220,7 @@ def sidebar_filters(data: dict[str, pd.DataFrame]) -> tuple[str, list[str], pd.T
             value=(minimum, maximum),
             min_value=minimum,
             max_value=maximum,
-            help="运营总览还可以在页面内使用近 7 天、近 30 天快捷窗口。",
+            help="运营总览还可以在页面内使用近 1 天、近 7 天、近 30 天快捷窗口。",
         )
         all_customers = sorted(logs["customer_id"].dropna().unique())
         customers = st.multiselect("客户", all_customers, default=all_customers)
@@ -1727,7 +2319,13 @@ def main() -> None:
     )
 
     if module == "运营总览":
-        render_overview(logs, operating, profiles, data["external_benchmarks"])
+        render_overview(
+            logs,
+            operating,
+            profiles,
+            _date_filter(data["operating"], "date", start, end),
+            data["profiles"],
+        )
     elif module == "性能诊断":
         render_performance(operating)
     elif module == "成本分析":
