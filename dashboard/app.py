@@ -311,7 +311,8 @@ def _score_level_badge(label: str, color: str, target=None, icon: str | None = N
           color:#6b080c;font-size:0.875rem;font-weight:500;line-height:1.35;">
           {escape(label)}
         </span>
-        """
+        """,
+        width="content",
     )
 
 
