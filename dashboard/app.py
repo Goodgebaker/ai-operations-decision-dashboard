@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from html import escape
 from pathlib import Path
 
 
@@ -67,7 +68,7 @@ MODULES = [
     "性能诊断",
     "成本分析",
     "能力校准",
-    "资源与容量诊断",
+    "容量诊断",
 ]
 
 MODULE_NAVIGATION = [
@@ -75,7 +76,7 @@ MODULE_NAVIGATION = [
     ("性能诊断", ":material/speed:", "nav_performance"),
     ("成本分析", ":material/paid:", "nav_cost"),
     ("能力校准", ":material/model_training:", "nav_calibration"),
-    ("资源与容量诊断", ":material/memory:", "nav_capacity"),
+    ("容量诊断", ":material/memory:", "nav_capacity"),
 ]
 
 DIMENSION_LABELS = {
@@ -87,10 +88,12 @@ DIMENSION_LABELS = {
 
 PERFORMANCE_SCORE_LEVELS = (
     (80.0, "优秀", "green"),
-    (60.0, "良好", "blue"),
+    (60.0, "良好", "yellow"),
     (40.0, "一般", "orange"),
     (0.0, "较差", "red"),
 )
+
+SIGNIFICANT_SCORE_DROP = 5.0
 
 ALGORITHM_OPTIONS = {
     "复合规则": ("pred_composite_rules", "score_composite_rules"),
@@ -279,6 +282,71 @@ def _performance_score_level(score: float) -> tuple[str, str]:
     return "数据不足", "gray"
 
 
+def _capacity_state_badge(label: str, color: str) -> None:
+    """容量风险使用独立红色，避免被全局低分棕红色主题覆盖。"""
+    if color != "red":
+        st.badge(label, color=color)
+        return
+    st.html(
+        f"""
+        <span style="display:inline-flex;align-items:center;width:fit-content;
+          padding:0.16rem 0.46rem;border-radius:0.45rem;background:#FEE4E2;
+          color:#B42318;font-size:0.875rem;font-weight:500;line-height:1.35;">
+          {escape(label)}
+        </span>
+        """
+    )
+
+
+def _score_level_badge(label: str, color: str, target=None, icon: str | None = None) -> None:
+    """评分低档徽章固定使用深红色，绕开 Streamlit 对 red 的主题派生。"""
+    renderer = st if target is None else target
+    if color != "red":
+        renderer.badge(label, color=color, icon=icon)
+        return
+    renderer.html(
+        f"""
+        <span style="display:inline-flex;align-items:center;width:fit-content;
+          padding:0.16rem 0.46rem;border-radius:0.45rem;background:#F8D7DA;
+          color:#6b080c;font-size:0.875rem;font-weight:500;line-height:1.35;">
+          {escape(label)}
+        </span>
+        """
+    )
+
+
+def _score_gauge_color(score: float) -> str:
+    """与性能和成本评分等级一致的仪表盘颜色。"""
+    if pd.isna(score):
+        return "#98A2B3"
+    if score >= 80:
+        return "#12B76A"
+    if score >= 60:
+        return "#FACC15"
+    if score >= 40:
+        return "#F97316"
+    return "#6b080c"
+
+
+def _score_bar(score: float) -> alt.LayerChart:
+    """紧凑彩色评分横条，颜色与全站评分等级保持一致。"""
+    value = min(100.0, max(0.0, float(score))) if pd.notna(score) else 0.0
+    bar_data = pd.DataFrame({"value": [value], "full": [100.0], "row": ["评分"]})
+    background = alt.Chart(bar_data).mark_bar(
+        color="#EAECF0", cornerRadius=6, size=10
+    ).encode(
+        x=alt.X("full:Q", scale=alt.Scale(domain=[0, 100]), axis=None),
+        y=alt.Y("row:N", axis=None),
+    )
+    foreground = alt.Chart(bar_data).mark_bar(
+        color=_score_gauge_color(value), cornerRadius=6, size=10
+    ).encode(
+        x=alt.X("value:Q", scale=alt.Scale(domain=[0, 100]), axis=None),
+        y=alt.Y("row:N", axis=None),
+    )
+    return alt.layer(background, foreground).properties(height=16).configure_view(stroke=None)
+
+
 def _weighted_performance_summary(frame: pd.DataFrame) -> dict[str, float]:
     """按日调用量汇总性能窗口，不生成额外估算数据。"""
     columns = [
@@ -330,8 +398,15 @@ def _score_change_text(
         return "未开启周期对比", "gray"
     if pd.isna(previous):
         return "上一周期数据不足", "gray"
-    change = current - previous
-    color = "green" if change > 0 else "red" if change < 0 else "gray"
+    change = round(float(current) - float(previous), 1)
+    if change > 0:
+        color = "blue"
+    elif change <= -SIGNIFICANT_SCORE_DROP:
+        color = "orange"
+    elif change < 0:
+        color = "yellow"
+    else:
+        color = "gray"
     return f"较上一周期 {change:+.1f} 分", color
 
 
@@ -359,11 +434,11 @@ def _confidence_band(score: float) -> str:
 
 
 def _performance_gap_label(gap: float) -> str:
-    """用自然语言说明主动拨测分与真实表现分的差异方向。"""
+    """用自然语言说明系统主动检查分与真实表现分的差异方向。"""
     if pd.isna(gap) or abs(gap) < 0.05:
         return "基本持平"
     if gap > 0:
-        return f"拨测高 {gap:.1f} 分"
+        return f"主动检查高 {gap:.1f} 分"
     return f"真实高 {abs(gap):.1f} 分"
 
 
@@ -544,15 +619,8 @@ def _render_decision_summary(
         else None
     )
 
-    if overall_health >= 85:
-        status = "运行良好"
-        gauge_color = "#12B76A"
-    elif overall_health >= 75:
-        status = "需要关注"
-        gauge_color = "#F79009"
-    else:
-        status = "高风险"
-        gauge_color = "#D92D20"
+    status, status_badge_color = _performance_score_level(overall_health)
+    gauge_color = _score_gauge_color(overall_health)
 
     weakest_health = float(weakest["health_score"])
     if weakest_health < 75:
@@ -574,7 +642,13 @@ def _render_decision_summary(
         vertical_alignment="top",
     )
     with status_col:
-        with st.container(border=True, height=430, key="health_core"):
+        with st.container(
+            border=True,
+            height="stretch",
+            key="health_core",
+            vertical_alignment="distribute",
+            gap="xsmall",
+        ):
             st.caption("模型总体健康指数")
             st.altair_chart(
                 _health_gauge(overall_health, gauge_color),
@@ -596,12 +670,12 @@ def _render_decision_summary(
                 theme=None,
             )
     with action_col:
-        with st.container(border=True, height=430, key="health_action"):
+        with st.container(border=True, height="stretch", key="health_action", vertical_alignment="center"):
             st.caption("风险分析与推荐动作")
-            st.badge(
+            _score_level_badge(
                 status,
-                icon=":material/warning:" if badge_color == "orange" else ":material/check_circle:",
-                color=badge_color,
+                status_badge_color,
+                icon=":material/check_circle:" if status_badge_color in {"green", "blue"} else ":material/warning:",
             )
             st.markdown(f"### {action_title}")
             st.write(action_detail)
@@ -624,17 +698,14 @@ def _render_decision_summary(
                 )
             st.caption(f"风险模型：{weakest['model_id']} · 建议结合实时流量与容量余量执行。")
     with breakdown_col:
-        with st.container(border=True, height=430, key="health_breakdown"):
-            st.caption("评分拆解与指标贡献")
-            weakest_component = min(component_scores, key=component_scores.get)
+        with st.container(border=True, height="stretch", key="health_breakdown"):
             score_help = {
                 "成功率": "业务调用成功率相对 99% 目标的得分，健康权重 35%。",
                 "性能": "延迟评分 70% + 稳定性评分 30%，健康权重 50%。",
                 "成本": "单请求成本、千 Token 成本与成本趋势综合得分，健康权重 15%。",
             }
-            contribution_weights = {"成功率": 35, "性能": 50, "成本": 15}
             for label, score in component_scores.items():
-                with st.container(border=True, key=f"health_score_{label}"):
+                with st.container(border=True, key=f"health_score_{label}", gap="xsmall"):
                     score_row = st.container(
                         horizontal=True,
                         horizontal_alignment="distribute",
@@ -645,11 +716,10 @@ def _render_decision_summary(
                         f"{score:.1f}",
                         help=score_help[label],
                     )
-                    if label == weakest_component:
-                        score_row.badge("当前短板", color="orange")
-                    st.progress(
-                        min(1.0, max(0.0, score / 100.0)),
-                        text=f"健康指数贡献权重：{contribution_weights[label]}%",
+                    component_level, component_color = _performance_score_level(score)
+                    _score_level_badge(component_level, component_color, target=score_row)
+                    st.altair_chart(
+                        _score_bar(score), width="stretch", theme=None
                     )
 
 
@@ -781,19 +851,19 @@ def render_overview(
         st.info("当前筛选范围没有运营数据。")
         return
 
-    summary_header = st.container(
-        horizontal=True,
-        horizontal_alignment="distribute",
-        vertical_alignment="center",
+    description_column, window_column = st.columns(
+        [1, 1], vertical_alignment="center"
     )
-    summary_header.subheader("今日决策摘要")
-    window_label = summary_header.segmented_control(
+    description_column.caption("快速掌握平台整体健康、关键风险与各模型的运营表现。")
+    window_controls = window_column.container(horizontal_alignment="right")
+    window_label = window_controls.segmented_control(
         "观察窗口",
         ["近 1 天", "近 7 天", "近 30 天", "全部"],
         default="近 7 天",
         required=True,
         key="overview_window",
         label_visibility="collapsed",
+        width="content",
     )
     logs, operating = _overview_window(logs, operating, str(window_label))
     _, summary_operating = _overview_window(
@@ -815,11 +885,27 @@ def render_overview(
     _render_decision_summary(summary_operating, overall_profiles)
 
     _metric_row([
-        {"label": "调用量", "value": f"{len(logs):,}"},
-        {"label": "Token", "value": f"{int(logs['total_tokens'].sum()):,}"},
-        {"label": "估算成本", "value": f"¥{logs['estimated_cost'].sum():,.2f}"},
-        {"label": "成功率", "value": f"{logs['is_success'].mean() * 100:.2f}%"},
-        {"label": "P95 延迟", "value": f"{logs['latency_ms'].quantile(.95):,.0f} ms"},
+        {"label": "调用量", "value": f"{len(logs):,}", "help": "当前观察窗口内的请求总数。"},
+        {
+            "label": "Token",
+            "value": f"{int(logs['total_tokens'].sum()):,}",
+            "help": "当前观察窗口内所有请求输入与输出 Token 的合计。",
+        },
+        {
+            "label": "估算成本",
+            "value": f"¥{logs['estimated_cost'].sum():,.2f}",
+            "help": "按项目中的模拟单价估算，用于观察趋势和比较模型，不代表真实账单。",
+        },
+        {
+            "label": "成功率",
+            "value": f"{logs['is_success'].mean() * 100:.2f}%",
+            "help": "成功完成的请求数占全部请求数的比例。",
+        },
+        {
+            "label": "P95 延迟",
+            "value": f"{logs['latency_ms'].quantile(.95):,.0f} ms",
+            "help": "95% 的请求会在该时间内完成；数值越低，通常表示响应越快。",
+        },
     ])
 
     left, right = st.columns([1.45, 1], gap="large")
@@ -863,10 +949,12 @@ def render_overview(
         ranking_style = ranking.style.map(
             lambda value: (
                 "background-color: #dcfce7; color: #166534; font-weight: 700;"
-                if float(value) >= 85
-                else "background-color: #fef3c7; color: #92400e; font-weight: 700;"
-                if float(value) >= 75
-                else "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
+                if float(value) >= 80
+                else "background-color: #fef9c3; color: #854d0e; font-weight: 700;"
+                if float(value) >= 60
+                else "background-color: #ffedd5; color: #9a3412; font-weight: 700;"
+                if float(value) >= 40
+                else "background-color: #f3e4df; color: #6b080c; font-weight: 700;"
             ),
             subset=["health_score"],
         )
@@ -924,15 +1012,9 @@ def render_performance(operating: pd.DataFrame) -> None:
         return
 
     models = sorted(operating["model_id"].dropna().unique())
-    controls = st.container(horizontal=True, gap="small", vertical_alignment="bottom")
+    control_main, control_time = st.columns([3, 2], gap="large", vertical_alignment="bottom")
+    controls = control_main.container(horizontal=True, gap="medium", vertical_alignment="bottom")
     model = controls.selectbox("诊断模型", models, key="performance_model", width=260)
-    window_label = controls.segmented_control(
-        "时间范围",
-        ["过去 7 天", "过去 30 天", "过去 90 天"],
-        default="过去 30 天",
-        required=True,
-        key="performance_window",
-    )
     compare_options: list[str | None] = [None] + [item for item in models if item != model]
     compare_model = controls.selectbox(
         "添加对比模型",
@@ -951,6 +1033,15 @@ def render_performance(operating: pd.DataFrame) -> None:
         "与上一周期对比",
         value=True,
         key="performance_compare_previous",
+    )
+    time_controls = control_time.container(horizontal_alignment="right")
+    window_label = time_controls.segmented_control(
+        "时间范围",
+        ["过去 7 天", "过去 30 天", "过去 90 天"],
+        default="过去 30 天",
+        required=True,
+        key="performance_window",
+        width="content",
     )
 
     window_days = {"过去 7 天": 7, "过去 30 天": 30, "过去 90 天": 90}
@@ -1005,24 +1096,50 @@ def render_performance(operating: pd.DataFrame) -> None:
         ("稳定性", current_summary["stability_score"], stability_explanation, "stability_score"),
     ]
     conclusion_cols = st.columns(3, gap="medium")
-    for column, (title, score, explanation, score_column) in zip(conclusion_cols, conclusions):
+    total_title, total_score, total_explanation, total_column = conclusions[0]
+    total_level, total_badge_color = _performance_score_level(total_score)
+    total_change, total_change_color = _score_change_text(
+        total_score, previous_summary[total_column], compare_previous
+    )
+    with conclusion_cols[0].container(
+        border=True, height=280, gap="xsmall", vertical_alignment="distribute"
+    ):
+        st.markdown(f"**{total_title}**")
+        st.altair_chart(
+            _health_gauge(total_score, _score_gauge_color(total_score)),
+            width="stretch",
+            theme=None,
+        )
+        total_tags = st.container(horizontal=True, gap="small")
+        _score_level_badge(total_level, total_badge_color, target=total_tags)
+        total_tags.badge(total_change, color=total_change_color)
+    component_weights = {"响应速度": "70%", "稳定性": "30%"}
+    component_help = {
+        "响应速度": "由 P50、P95、P99 延迟按指标字典归一化后加权计算，占综合体验 70%。",
+        "稳定性": "由日内 P95 延迟波动和成功率波动计算，占综合体验 30%。",
+    }
+    for column, (title, score, explanation, score_column) in zip(conclusion_cols[1:], conclusions[1:]):
         level, color = _performance_score_level(score)
         change_text, change_color = _score_change_text(
             score,
             previous_summary[score_column],
             compare_previous,
         )
-        with column.container(border=True, height=230):
+        with column.container(
+            border=True, height=280, gap="xsmall", vertical_alignment="distribute"
+        ):
+            st.caption(f"总评分构成 · 权重 {component_weights[title]}")
             title_row = st.container(
                 horizontal=True,
                 horizontal_alignment="distribute",
                 vertical_alignment="center",
             )
-            title_row.markdown(f"**{title}**")
-            title_row.badge(level, color=color)
-            st.markdown(f"## {score:.0f} / 100")
+            title_row.metric(title, f"{score:.0f} / 100", help=component_help[title])
+            _score_level_badge(level, color, target=title_row)
+            st.altair_chart(_score_bar(score), width="stretch", theme=None)
             st.caption(explanation)
             st.badge(change_text, color=change_color)
+    st.caption("综合体验由右侧两项计算：响应速度 × 70% + 稳定性 × 30%。")
 
     attention_days = selected[
         selected["latency_score"].lt(40) | selected["stability_score"].lt(40)
@@ -1167,15 +1284,9 @@ def render_cost(operating: pd.DataFrame) -> None:
         return
 
     models = sorted(operating["model_id"].dropna().unique())
-    controls = st.container(horizontal=True, gap="small", vertical_alignment="bottom")
+    control_main, control_time = st.columns([3, 2], gap="large", vertical_alignment="bottom")
+    controls = control_main.container(horizontal=True, gap="medium", vertical_alignment="bottom")
     model = controls.selectbox("成本分析模型", models, key="cost_model", width=260)
-    window_label = controls.segmented_control(
-        "时间范围",
-        ["过去 7 天", "过去 30 天", "过去 90 天"],
-        default="过去 30 天",
-        required=True,
-        key="cost_window",
-    )
     compare_options: list[str | None] = [None] + [item for item in models if item != model]
     compare_model = controls.selectbox(
         "添加对比模型",
@@ -1194,6 +1305,15 @@ def render_cost(operating: pd.DataFrame) -> None:
         "与上一周期对比",
         value=True,
         key="cost_compare_previous",
+    )
+    time_controls = control_time.container(horizontal_alignment="right")
+    window_label = time_controls.segmented_control(
+        "时间范围",
+        ["过去 7 天", "过去 30 天", "过去 90 天"],
+        default="过去 30 天",
+        required=True,
+        key="cost_window",
+        width="content",
     )
 
     window_days = {"过去 7 天": 7, "过去 30 天": 30, "过去 90 天": 90}
@@ -1237,24 +1357,50 @@ def render_cost(operating: pd.DataFrame) -> None:
         ("质量保障", current_summary["quality_score"], quality_explanation, "quality_score"),
     ]
     conclusion_cols = st.columns(3, gap="medium")
-    for column, (title, score, explanation, score_column) in zip(conclusion_cols, conclusions):
+    total_title, total_score, total_explanation, total_column = conclusions[0]
+    total_level, total_badge_color = _performance_score_level(total_score)
+    total_change, total_change_color = _score_change_text(
+        total_score, previous_summary[total_column], compare_previous
+    )
+    with conclusion_cols[0].container(
+        border=True, height=280, gap="xsmall", vertical_alignment="distribute"
+    ):
+        st.markdown(f"**{total_title}**")
+        st.altair_chart(
+            _health_gauge(total_score, _score_gauge_color(total_score)),
+            width="stretch",
+            theme=None,
+        )
+        total_tags = st.container(horizontal=True, gap="small")
+        _score_level_badge(total_level, total_badge_color, target=total_tags)
+        total_tags.badge(total_change, color=total_change_color)
+    component_weights = {"成本效率": "40%", "质量保障": "60%"}
+    component_help = {
+        "成本效率": "综合单请求成本、千 Token 成本和相对历史基线趋势，占成本总评分 40%。",
+        "质量保障": "来自统一标准能力任务的质量评分，占成本总评分 60%。",
+    }
+    for column, (title, score, explanation, score_column) in zip(conclusion_cols[1:], conclusions[1:]):
         level, color = _performance_score_level(score)
         change_text, change_color = _score_change_text(
             score,
             previous_summary[score_column],
             compare_previous,
         )
-        with column.container(border=True, height=230):
+        with column.container(
+            border=True, height=280, gap="xsmall", vertical_alignment="distribute"
+        ):
+            st.caption(f"总评分构成 · 权重 {component_weights[title]}")
             title_row = st.container(
                 horizontal=True,
                 horizontal_alignment="distribute",
                 vertical_alignment="center",
             )
-            title_row.markdown(f"**{title}**")
-            title_row.badge(level, color=color)
-            st.markdown(f"## {score:.0f} / 100")
+            title_row.metric(title, f"{score:.0f} / 100", help=component_help[title])
+            _score_level_badge(level, color, target=title_row)
+            st.altair_chart(_score_bar(score), width="stretch", theme=None)
             st.caption(explanation)
             st.badge(change_text, color=change_color)
+    st.caption("成本总评分由右侧两项计算：质量保障 × 60% + 成本效率 × 40%。")
 
     attention_days = selected[
         selected["cost_efficiency_score"].lt(40) | selected["quality_score"].lt(40)
@@ -1380,52 +1526,97 @@ def render_calibration(
     probe_events: pd.DataFrame,
 ) -> None:
     _section(
-        "主动拨测与模型能力校准",
-        "在固定输入和标准环境下校准能力、稳定性与响应速度，再与真实调用对照，定位异常来源并形成路由画像。",
+        "模型能力校准",
+        "综合模型能力、稳定性、性能与成本，判断它更适合承担哪类请求。",
     )
-    st.caption("数据口径：当前能力得分和历史拨测为模拟假设；模型名称与延迟基线已按真实资源数据校准。")
+    with st.expander("数据说明", icon=":material/info:"):
+        st.caption("当前能力得分和历史主动检查为模拟假设；模型名称与延迟基线已按真实资源数据校准。主动检查是系统定时发送标准请求，以确认模型能否正常响应，不代表真实业务流量。")
     if profiles.empty:
         st.info("缺少模型能力画像数据，请先运行 capability_calibration.py、model_operations.py 和 model_profile.py。")
         return
     model = st.selectbox("画像模型", sorted(profiles["model_id"].unique()), key="profile_model")
     profile = profiles[profiles["model_id"].eq(model)].sort_values("date").iloc[-1]
 
-    st.markdown("#### 路由决策摘要")
-    decision_score, decision_detail = st.columns([1, 2.2], gap="large", vertical_alignment="center")
+    route_score = float(profile["routing_readiness_score"])
+    route_color = _score_gauge_color(route_score)
+    if route_score >= 80:
+        route_state, route_badge_color = "优先候选", "green"
+    elif route_score >= 60:
+        route_state, route_badge_color = "可用但需观察", "blue"
+    elif route_score >= 40:
+        route_state, route_badge_color = "谨慎分配流量", "orange"
+    else:
+        route_state, route_badge_color = "暂不建议扩大流量", "red"
+    decision_score, decision_detail, score_evidence = st.columns(
+        [25, 45, 30], gap="medium", vertical_alignment="top"
+    )
     with decision_score:
-        st.metric(
-            "综合路由评分",
-            f"{profile['routing_readiness_score']:.1f}",
-            help="能力 35% + 稳定性 20% + 性能 25% + 成本总评分 20%。这是本页用于路由决策的主分。",
+        with st.container(
             border=True,
-        )
+            height=330,
+            key="routing_score_core",
+            vertical_alignment="distribute",
+            gap="xsmall",
+        ):
+            st.caption("综合路由评分")
+            st.altair_chart(_health_gauge(route_score, route_color), width="stretch", theme=None)
+            st.caption("分数越高，越适合承接新增请求。")
     with decision_detail:
-        with st.container(border=True):
-            st.markdown(f"**推荐角色：{profile['recommended_role']}**")
+        with st.container(
+            border=True,
+            height=330,
+            key="routing_score_action",
+            vertical_alignment="distribute",
+            gap="xsmall",
+        ):
+            st.caption("路由建议")
+            st.badge(route_state, color=route_badge_color)
+            st.markdown(f"### {profile['recommended_role']}")
             st.write(profile["routing_action"])
             dominant = DIMENSION_LABELS.get(profile["dominant_capability"], profile["dominant_capability"])
             weakest = DIMENSION_LABELS.get(profile["weakest_capability"], profile["weakest_capability"])
-            st.caption(f"优势能力：{dominant} · 相对弱项：{weakest}")
+            scene_cols = st.columns(2)
+            scene_cols[0].markdown(f"**适合承接**  \n{dominant}类任务")
+            scene_cols[1].markdown(f"**需要谨慎**  \n{weakest}类任务")
+            st.caption(f"执行提示：{profile['recommended_action']}")
+    with score_evidence:
+        with st.container(
+            border=True,
+            height=330,
+            key="routing_score_evidence",
+            vertical_alignment="distribute",
+            gap="xsmall",
+        ):
+            st.caption("评分依据")
+            with st.container(gap="small"):
+                st.markdown(f"**能力 35%**　{profile['capability_score']:.1f}")
+                st.markdown(f"**稳定性 20%**　{profile['profile_stability_score']:.1f}")
+                st.markdown(f"**性能 25%**　{profile['profile_performance_score']:.1f}")
+                st.markdown(f"**成本 20%**　{profile['cost_performance_score']:.1f}")
+            confidence = float(profile["confidence_score"])
+            confidence_level, confidence_color = _performance_score_level(confidence)
+            st.divider()
+            confidence_row = st.container(
+                horizontal=True,
+                horizontal_alignment="distribute",
+                vertical_alignment="center",
+            )
+            confidence_row.markdown(f"**证据可信度 · {confidence:.1f}**")
+            _score_level_badge(confidence_level, confidence_color, target=confidence_row)
+            st.altair_chart(_score_bar(confidence), width="stretch", theme=None)
+            st.caption("表示本次画像的数据证据是否充分，不代表模型能力高低。")
 
-    st.markdown("#### 评分构成")
-    _metric_row([
-        {"label": "能力评分", "value": f"{profile['capability_score']:.1f}", "help": "四类标准任务按指标字典权重汇总。"},
-        {"label": "稳定性评分", "value": f"{profile['profile_stability_score']:.1f}", "help": "真实调用稳定性 60% + 标准任务重复一致性 40%。"},
-        {"label": "性能评分", "value": f"{profile['profile_performance_score']:.1f}", "help": "真实调用性能 60% + 标准环境性能 40%。"},
-    ])
-    confidence = float(profile["confidence_score"])
-    with st.container(border=True):
-        confidence_level = _confidence_band(confidence)
-        st.markdown(f"**证据可信度：{confidence_level}（{confidence:.1f}/100）**")
-        st.progress(confidence / 100)
-        st.caption("可信度衡量任务覆盖、样本充分度、数据新鲜度和评测一致性，只表示这份画像有多可靠，不代表模型能力高低。")
-
-    st.markdown("#### 标准化测试任务")
     filtered_capability = capability[capability["model_id"].eq(model)].copy()
-    if not filtered_capability.empty:
-        filtered_capability["能力维度"] = filtered_capability["capability_dimension"].map(DIMENSION_LABELS)
-        left, right = st.columns([1.05, 1.4], gap="large")
-        with left:
+    model_diagnosis = diagnosis[diagnosis["model_id"].eq(model)].sort_values("date", ascending=False)
+    diagnosis_summary = pd.DataFrame()
+    task_col, diagnosis_col = st.columns([1, 1.15], gap="large", vertical_alignment="top")
+    with task_col:
+        st.markdown("#### 标准化测试任务")
+        st.caption("在相同环境下比较模型各类任务的完成质量。")
+        if filtered_capability.empty:
+            st.info("当前模型没有标准化测试记录。")
+        else:
+            filtered_capability["能力维度"] = filtered_capability["capability_dimension"].map(DIMENSION_LABELS)
             chart = (
                 alt.Chart(filtered_capability)
                 .mark_bar(cornerRadiusEnd=4)
@@ -1435,60 +1626,84 @@ def render_calibration(
                     color=alt.Color("能力维度:N", legend=None),
                     tooltip=[alt.Tooltip("能力维度:N"), alt.Tooltip("quality_score:Q", title="质量", format=".1f"), alt.Tooltip("consistency_score:Q", title="一致性", format=".1f"), alt.Tooltip("p95_latency_ms:Q", title="P95 延迟", format=",.0f")],
                 )
-                .properties(height=285)
+                .properties(height=300)
             )
             st.altair_chart(chart, width="stretch")
-        with right:
-            st.dataframe(
-                filtered_capability,
-                column_order=["能力维度", "run_count", "pass_rate", "quality_score", "consistency_score", "p50_latency_ms", "p95_latency_ms"],
-                column_config={
-                    "能力维度": "标准任务维度",
-                    "run_count": "样本数",
-                    "pass_rate": st.column_config.NumberColumn("通过率", format="%.1f%%"),
-                    "quality_score": st.column_config.NumberColumn("能力/质量", format="%.1f"),
-                    "consistency_score": st.column_config.NumberColumn("稳定性", format="%.1f"),
-                    "p50_latency_ms": st.column_config.NumberColumn("P50（ms）", format="%,.0f"),
-                    "p95_latency_ms": st.column_config.NumberColumn("P95（ms）", format="%,.0f"),
-                },
-                hide_index=True,
-                height=285,
-            )
+            with st.expander("查看标准化测试明细"):
+                st.dataframe(
+                    filtered_capability,
+                    column_order=["能力维度", "run_count", "pass_rate", "quality_score", "consistency_score", "p50_latency_ms", "p95_latency_ms"],
+                    column_config={
+                        "能力维度": "标准任务维度",
+                        "run_count": "样本数",
+                        "pass_rate": st.column_config.NumberColumn("通过率", format="%.1f%%"),
+                        "quality_score": st.column_config.NumberColumn("能力/质量", format="%.1f"),
+                        "consistency_score": st.column_config.NumberColumn("稳定性", format="%.1f"),
+                        "p50_latency_ms": st.column_config.NumberColumn("P50（ms）", format="%,.0f"),
+                        "p95_latency_ms": st.column_config.NumberColumn("P95（ms）", format="%,.0f"),
+                    },
+                    hide_index=True,
+                    height=285,
+                )
+    with diagnosis_col:
+        st.markdown("#### 真实使用与主动检查")
+        st.caption("对比真实使用和系统标准检查，帮助判断问题来自模型还是运行环境。")
+        if model_diagnosis.empty:
+            st.info("当前筛选范围没有该模型的诊断记录。")
+        else:
+            latest_diagnosis = model_diagnosis.iloc[0]
+            with st.container(border=True):
+                st.markdown(f"**最新诊断 · {latest_diagnosis['date']:%Y-%m-%d}**")
+                real_score, probe_score = st.columns(2)
+                real_score.metric("真实表现", f"{latest_diagnosis['performance_score']:.1f}")
+                probe_score.metric("主动检查", f"{latest_diagnosis['probe_performance_score']:.1f}", help="系统在固定环境下发送标准请求后得到的表现评分。技术上称为主动拨测。")
+                st.caption(f"表现差异：{_performance_gap_label(latest_diagnosis['performance_gap_score'])}")
+                st.markdown(f"**原因判断：** {latest_diagnosis['diagnosis_reason']}")
+                st.markdown(f"**切换判断：** {latest_diagnosis['switch_recommendation']}")
+                st.info(latest_diagnosis["recommended_action"], icon=":material/recommend:")
 
-    st.markdown("#### 真实调用 vs 主动拨测融合诊断")
-    st.caption("真实调用 = 用户行为 + 网络环境 + 平台状态 + 模型能力；主动拨测 = 固定输入 + 标准环境 + 模型能力。差异用于判断异常来源。")
-    model_diagnosis = diagnosis[diagnosis["model_id"].eq(model)].sort_values("date", ascending=False)
-    if model_diagnosis.empty:
-        st.info("当前筛选范围没有该模型的融合诊断记录。")
-    else:
-        latest_diagnosis = model_diagnosis.iloc[0]
-        with st.container(border=True):
-            st.markdown(f"**最新诊断 · {latest_diagnosis['date']:%Y-%m-%d}**")
-            real_score, probe_score, gap_score = st.columns(3)
-            real_score.metric("真实表现指数", f"{latest_diagnosis['performance_score']:.1f}")
-            probe_score.metric("主动拨测指数", f"{latest_diagnosis['probe_performance_score']:.1f}")
-            gap_score.metric("表现差异", _performance_gap_label(latest_diagnosis["performance_gap_score"]))
-            st.markdown(f"**原因判断：** {latest_diagnosis['diagnosis_reason']}")
-            st.markdown(f"**切换判断：** {latest_diagnosis['switch_recommendation']}")
-            st.info(latest_diagnosis["recommended_action"], icon=":material/recommend:")
-
-        st.markdown("##### 近 7 次诊断轨迹")
-        diagnosis_summary = model_diagnosis.head(7).copy()
-        diagnosis_summary["表现差异"] = diagnosis_summary["performance_gap_score"].map(_performance_gap_label)
+    st.markdown("#### 多模型路由画像")
+    st.caption("横向比较各模型承接新增请求的适合程度。")
+    st.dataframe(
+        profiles.sort_values("profile_rank"),
+        column_order=["profile_rank", "model_id", "routing_readiness_score", "capability_score", "profile_stability_score", "profile_performance_score", "cost_performance_score", "confidence_score", "recommended_role"],
+        column_config={
+            "profile_rank": st.column_config.NumberColumn("排名", format="#%d", width="small", pinned=True),
+            "model_id": st.column_config.TextColumn("模型", width="medium", pinned=True),
+            "routing_readiness_score": st.column_config.ProgressColumn("综合路由评分", min_value=0, max_value=100, format="%.1f", width="medium"),
+            "capability_score": st.column_config.NumberColumn("能力", format="%.1f", width="small"),
+            "profile_stability_score": st.column_config.NumberColumn("稳定性", format="%.1f", width="small"),
+            "profile_performance_score": st.column_config.NumberColumn("性能", format="%.1f", width="small"),
+            "cost_performance_score": st.column_config.NumberColumn("成本", format="%.1f", width="small"),
+            "confidence_score": st.column_config.NumberColumn("可信度", format="%.1f", width="small"),
+            "recommended_role": st.column_config.TextColumn("建议角色", width="large"),
+        },
+        hide_index=True,
+        height=250,
+    )
+    with st.expander("查看完整模型画像"):
         st.dataframe(
-            diagnosis_summary,
-            column_order=["date", "performance_score", "probe_performance_score", "表现差异", "diagnosis_reason", "switch_recommendation"],
+            profiles.sort_values("profile_rank"),
+            column_order=["profile_rank", "model_id", "capability_score", "profile_stability_score", "profile_performance_score", "confidence_score", "routing_readiness_score", "dominant_capability", "weakest_capability", "recommended_role", "routing_action"],
             column_config={
-                "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD"),
-                "performance_score": st.column_config.ProgressColumn("真实表现", min_value=0, max_value=100, format="%.1f"),
-                "probe_performance_score": st.column_config.ProgressColumn("主动拨测", min_value=0, max_value=100, format="%.1f"),
-                "表现差异": "差异",
-                "diagnosis_reason": "原因判断",
-                "switch_recommendation": "切换判断",
+                "profile_rank": st.column_config.NumberColumn("排名", format="#%d"),
+                "model_id": "模型",
+                "capability_score": st.column_config.NumberColumn("能力", format="%.1f"),
+                "profile_stability_score": st.column_config.NumberColumn("稳定性", format="%.1f"),
+                "profile_performance_score": st.column_config.NumberColumn("性能", format="%.1f"),
+                "confidence_score": st.column_config.NumberColumn("可信度", format="%.1f"),
+                "routing_readiness_score": st.column_config.ProgressColumn("综合路由评分", min_value=0, max_value=100, format="%.1f"),
+                "dominant_capability": "优势能力",
+                "weakest_capability": "相对弱项",
+                "recommended_role": "建议角色",
+                "routing_action": "路由动作",
             },
             hide_index=True,
-            height=290,
         )
+
+    if not model_diagnosis.empty:
+        diagnosis_summary = model_diagnosis.head(7).copy()
+        diagnosis_summary["表现差异"] = diagnosis_summary["performance_gap_score"].map(_performance_gap_label)
 
         with st.expander("查看原始诊断证据与完整数据"):
             st.caption("以下字段用于复核诊断计算，默认折叠以避免干扰路由决策。")
@@ -1498,14 +1713,14 @@ def render_calibration(
                 column_config={
                     "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD"),
                     "success_rate": st.column_config.NumberColumn("真实成功率", format="%.2f%%"),
-                    "probe_http_success_rate": st.column_config.NumberColumn("拨测成功率", format="%.2f%%"),
+                    "probe_http_success_rate": st.column_config.NumberColumn("主动检查成功率", format="%.2f%%"),
                     "p95_latency_ms": st.column_config.NumberColumn("真实 P95", format="%,.0f ms"),
-                    "probe_p95_latency_ms": st.column_config.NumberColumn("拨测 P95", format="%,.0f ms"),
+                    "probe_p95_latency_ms": st.column_config.NumberColumn("主动检查 P95", format="%,.0f ms"),
                     "performance_score": st.column_config.NumberColumn("真实性能分", format="%.1f"),
-                    "probe_performance_score": st.column_config.NumberColumn("拨测性能分", format="%.1f"),
+                    "probe_performance_score": st.column_config.NumberColumn("主动检查性能分", format="%.1f"),
                     "performance_gap_score": st.column_config.NumberColumn("性能分差", format="%.1f"),
                     "stability_score": st.column_config.NumberColumn("真实稳定性", format="%.1f"),
-                    "probe_consistency_score": st.column_config.NumberColumn("拨测一致性", format="%.1f"),
+                    "probe_consistency_score": st.column_config.NumberColumn("主动检查一致性", format="%.1f"),
                     "diagnosis_reason": "原因判断",
                     "switch_recommendation": "切换判断",
                     "recommended_action": "建议动作",
@@ -1521,45 +1736,44 @@ def render_calibration(
                 icon=":material/download:",
             )
 
-    st.markdown("#### 多模型路由输入画像")
-    st.dataframe(
-        profiles.sort_values("profile_rank"),
-        column_order=["profile_rank", "model_id", "capability_score", "profile_stability_score", "profile_performance_score", "confidence_score", "routing_readiness_score", "dominant_capability", "weakest_capability", "recommended_role", "routing_action"],
-        column_config={
-            "profile_rank": st.column_config.NumberColumn("排名", format="#%d"),
-            "model_id": "模型",
-            "capability_score": st.column_config.NumberColumn("能力", format="%.1f"),
-            "profile_stability_score": st.column_config.NumberColumn("稳定性", format="%.1f"),
-            "profile_performance_score": st.column_config.NumberColumn("性能", format="%.1f"),
-            "confidence_score": st.column_config.NumberColumn("可信度", format="%.1f"),
-            "routing_readiness_score": st.column_config.ProgressColumn("路由就绪度", min_value=0, max_value=100, format="%.1f"),
-            "dominant_capability": "优势能力",
-            "weakest_capability": "相对弱项",
-            "recommended_role": "建议角色",
-            "routing_action": "路由动作",
-        },
-        hide_index=True,
-    )
-
-    with st.expander("查看原有可用性拨测与导出"):
+    with st.expander("查看主动可用性检查（技术详情与导出）"):
         if probe_runs.empty:
-            st.info("当前范围没有可用性拨测记录。")
+            st.info("当前范围没有主动可用性检查记录。")
         else:
+            st.caption("系统定时发送标准请求，检查模型能否连接、成功响应以及响应是否过慢。以下为技术明细，普通用户通常无需查看。")
             availability = probe_runs["success"].astype(bool).mean() * 100
             cols = st.columns(3)
-            cols[0].metric("拨测可用率", f"{availability:.2f}%", border=True)
-            cols[1].metric("P95 首 Token", f"{probe_runs['ttft_ms'].quantile(.95):,.0f} ms", border=True)
-            cols[2].metric("拨测事件", len(probe_events), border=True)
+            cols[0].metric("检查成功率", f"{availability:.2f}%", border=True)
+            cols[1].metric("较慢请求的等待时间", f"{probe_runs['ttft_ms'].quantile(.95):,.0f} ms", help="95% 的检查请求会在这个时间内开始返回内容。", border=True)
+            cols[2].metric("异常检查次数", len(probe_events), border=True)
             latest_probe = probe_runs.sort_values("started_at").groupby("probe_id", as_index=False).tail(1)
             st.dataframe(
                 latest_probe,
                 column_order=["probe_name_cn", "provider", "model_id", "region", "success", "latency_ms", "ttft_ms", "failed_assertions"],
-                column_config={"probe_name_cn": "探针", "provider": "供应商", "model_id": "模型", "region": "区域", "success": "成功", "latency_ms": "延迟（ms）", "ttft_ms": "首 Token（ms）", "failed_assertions": "失败断言"},
+                column_config={"probe_name_cn": "检查项目", "provider": "供应商", "model_id": "模型", "region": "区域", "success": "是否成功", "latency_ms": "总等待时间（ms）", "ttft_ms": "开始返回时间（ms）", "failed_assertions": "未通过项目"},
                 hide_index=True,
             )
             c1, c2 = st.columns(2)
-            c1.download_button("下载拨测运行 CSV", probe_runs.to_csv(index=False).encode("utf-8-sig"), "probe_runs.csv", "text/csv", icon=":material/download:")
-            c2.download_button("下载拨测事件 CSV", probe_events.to_csv(index=False).encode("utf-8-sig"), "probe_alerts.csv", "text/csv", icon=":material/download:")
+            c1.download_button("下载检查记录 CSV", probe_runs.to_csv(index=False).encode("utf-8-sig"), "probe_runs.csv", "text/csv", icon=":material/download:")
+            c2.download_button("下载异常记录 CSV", probe_events.to_csv(index=False).encode("utf-8-sig"), "probe_alerts.csv", "text/csv", icon=":material/download:")
+
+    if not model_diagnosis.empty:
+        with st.expander("查看近 7 次诊断轨迹"):
+            st.caption("按日期回看真实使用表现、系统主动检查结果和当时的路由判断。")
+            st.dataframe(
+                diagnosis_summary,
+                column_order=["date", "performance_score", "probe_performance_score", "表现差异", "diagnosis_reason", "switch_recommendation"],
+                column_config={
+                    "date": st.column_config.DateColumn("日期", format="YYYY-MM-DD"),
+                    "performance_score": st.column_config.ProgressColumn("真实表现", min_value=0, max_value=100, format="%.1f"),
+                    "probe_performance_score": st.column_config.ProgressColumn("主动检查", min_value=0, max_value=100, format="%.1f"),
+                    "表现差异": "差异",
+                    "diagnosis_reason": "原因判断",
+                    "switch_recommendation": "切换判断",
+                },
+                hide_index=True,
+                height=290,
+            )
 
 
 def render_resource_capacity(
@@ -1568,10 +1782,11 @@ def render_resource_capacity(
     capacity: pd.DataFrame,
 ) -> None:
     _section(
-        "资源与容量诊断",
-        "基于每日真实工作簿观察并发、等待、TTFT、吞吐、NPU、Cache 与 HBM，定位算力和显存瓶颈。",
+        "容量诊断",
+        "判断当前资源是否足以承接流量，并给出扩容、迁移或继续观察的建议。",
     )
-    st.caption("数据口径：真实观测 · 实例标识已匿名化 · 中台模型不在监控范围内")
+    with st.expander("数据说明", icon=":material/info:"):
+        st.caption("数据来自每日真实资源工作簿；实例标识已经匿名化，中台模型不在监控范围内。当前没有独立的容量评分规则，因此本页直接展示真实风险状态和判断依据。")
     if model_series.empty or instance_hourly.empty or capacity.empty:
         st.info("尚未导入完整的真实资源数据。请把每日三份 Excel 放入指定目录后运行“更新每日数据.bat”。")
         return
@@ -1580,24 +1795,57 @@ def render_resource_capacity(
     latest = capacity[capacity["date"].eq(latest_date)].copy()
     high_npu_samples = int(latest["high_npu_samples"].sum())
     minimum_headroom = float(latest["hbm_headroom_pct"].min())
-    _metric_row(
-        [
-            {"label": "最新真实数据", "value": latest_date.strftime("%Y-%m-%d")},
-            {"label": "受监控模型", "value": f"{latest['model_id'].nunique()} 个"},
-            {"label": "商用实例", "value": f"{int(latest['instance_count'].sum())} 个"},
-            {"label": "最大等待", "value": f"{int(latest['waiting_max_busy'].max())}"},
-            {
-                "label": "NPU 高负载样本",
-                "value": f"{high_npu_samples}",
-                "delta_color": "inverse",
-            },
-            {
-                "label": "最小 HBM 余量",
-                "value": f"{minimum_headroom:.1f}%",
-                "delta_color": "inverse",
-            },
-        ]
+    risk_count = int(latest["capacity_state"].eq("容量风险").sum())
+    attention_count = int(latest["capacity_state"].eq("需要关注").sum())
+    state_priority = latest["capacity_state"].map({"容量风险": 0, "需要关注": 1}).fillna(2)
+    primary = latest.assign(_priority=state_priority).sort_values(
+        ["_priority", "hbm_headroom_pct", "npu_max"]
+    ).iloc[0]
+    if risk_count:
+        overall_state, state_color = "存在容量风险", "red"
+        action_title = f"优先处理 {primary['model_id']}"
+        action_detail = "先核查显存驻留和高负载尖峰，再评估增加实例、迁移流量或降低路由权重。"
+    elif attention_count:
+        overall_state, state_color = "容量需要关注", "orange"
+        action_title = "暂不扩大新增流量"
+        action_detail = "保持当前实例规模，观察忙时并发和显存余量，达到趋势基线后再决定是否扩容。"
+    else:
+        overall_state, state_color = "容量充足", "green"
+        action_title = "维持当前容量配置"
+        action_detail = "当前没有明显资源瓶颈，可继续承接流量并保持日常观察。"
+
+    status_col, action_col, evidence_col = st.columns(
+        [25, 45, 30], gap="medium", vertical_alignment="top"
     )
+    with status_col:
+        with st.container(border=True, height=350, key="capacity_status", vertical_alignment="distribute", gap="xsmall"):
+            st.caption("整体容量状态")
+            _capacity_state_badge(overall_state, state_color)
+            st.markdown(f"## {risk_count} 个高风险模型")
+            st.markdown(f"**{attention_count} 个需要关注**")
+            with st.popover("查看涉及模型", icon=":material/visibility:"):
+                for _, row in latest.assign(_priority=state_priority).sort_values(["_priority", "model_id"]).iterrows():
+                    color = "red" if row["capacity_state"] == "容量风险" else "orange"
+                    _capacity_state_badge(f"{row['model_id']} · {row['capacity_state']}", color)
+                    st.caption(row["diagnosis"])
+            st.caption(f"监控 {latest['model_id'].nunique()} 个模型 · {int(latest['instance_count'].sum())} 个实例")
+            st.caption(f"数据日期：{latest_date:%Y-%m-%d}")
+    with action_col:
+        with st.container(border=True, height=350, key="capacity_action", vertical_alignment="distribute", gap="xsmall"):
+            st.caption("容量建议")
+            st.markdown(f"### {action_title}")
+            st.write(action_detail)
+            st.markdown(f"**主要判断：** {primary['diagnosis']}")
+            st.caption(f"优先检查模型：{primary['model_id']} · 当前状态：{primary['capacity_state']}")
+    with evidence_col:
+        with st.container(border=True, height=350, key="capacity_evidence", vertical_alignment="distribute", gap="xsmall"):
+            st.caption("判断依据")
+            with st.container(gap="small"):
+                st.markdown(f"**最大等待**　{int(latest['waiting_max_busy'].max())}")
+                st.markdown(f"**NPU 高负载样本**　{high_npu_samples}")
+                st.markdown(f"**最小 HBM 余量**　{minimum_headroom:.1f}%")
+                st.markdown(f"**NPU 最高峰值**　{float(latest['npu_max'].max()):.0f}%")
+            st.caption("等待反映排队压力；HBM 余量反映显存空间；NPU 峰值用于识别短时算力拥堵。")
 
     if not bool(latest["baseline_ready"].all()):
         observed_days = int(latest.get("observed_days", pd.Series([1])).max())
@@ -1606,44 +1854,71 @@ def render_resource_capacity(
             icon=":material/calendar_clock:",
         )
 
-    st.markdown("#### 模型服务时序")
-    metric_label = st.segmented_control(
-        "资源趋势指标",
-        ["运行并发", "等待队列", "首字延迟", "服务吞吐"],
-        default="运行并发",
-        required=True,
-        key="resource_metric",
-    )
-    metric_specs = {
-        "运行并发": ("running", "运行并发"),
-        "等待队列": ("waiting", "等待数量"),
-        "首字延迟": ("ttft_ms", "TTFT（ms）"),
-        "服务吞吐": ("tokens_per_second", "Token/s（服务级）"),
-    }
-    metric_column, axis_title = metric_specs[str(metric_label)]
-    chart_data = model_series.dropna(subset=[metric_column]).copy()
-    chart = (
-        alt.Chart(chart_data)
-        .mark_line()
-        .encode(
-            x=alt.X("timestamp:T", title="时间"),
-            y=alt.Y(f"{metric_column}:Q", title=axis_title),
-            color=alt.Color("model_id:N", title="模型"),
-            tooltip=[
-                alt.Tooltip("timestamp:T", title="时间", format="%Y-%m-%d %H:%M"),
-                alt.Tooltip("model_id:N", title="模型"),
-                alt.Tooltip(f"{metric_column}:Q", title=str(metric_label), format=",.2f"),
-            ],
+    trend_col, diagnosis_col = st.columns([1.35, 1], gap="large", vertical_alignment="top")
+    with trend_col:
+        st.markdown("#### 容量趋势")
+        metric_label = st.segmented_control(
+            "资源趋势指标",
+            ["运行并发", "等待队列", "首字延迟", "服务吞吐"],
+            default="运行并发",
+            required=True,
+            key="resource_metric",
         )
-        .properties(height=330)
-    )
-    st.altair_chart(chart, width="stretch")
+    metric_specs = {
+        "运行并发": ("running", "同时处理的请求数", "越高表示同时处理的请求越多；持续接近实例数时需要关注。"),
+        "等待队列": ("waiting", "等待处理的请求数", "大于 0 表示请求开始排队；持续排队通常需要扩容或分流。"),
+        "首字延迟": ("ttft_ms", "开始返回内容的等待时间（ms）", "越低越好；突然升高可能来自排队、网络或模型负载。"),
+        "服务吞吐": ("tokens_per_second", "每秒输出 Token", "表示服务输出速度；需结合并发和等待一起判断容量。"),
+    }
+    metric_column, axis_title, metric_help = metric_specs[str(metric_label)]
+    chart_data = model_series.dropna(subset=[metric_column]).copy()
+    with trend_col:
+        if chart_data.empty:
+            st.info("当前指标没有可用趋势数据。")
+        else:
+            peak_row = chart_data.loc[chart_data[metric_column].idxmax()]
+            st.caption(
+                f"{metric_help} 当前最高值为 {peak_row[metric_column]:,.1f}，"
+                f"来自 {peak_row['model_id']}。"
+            )
+        chart = (
+            alt.Chart(chart_data)
+            .mark_line(interpolate="step-after", strokeWidth=2)
+            .encode(
+                x=alt.X("timestamp:T", title="时间"),
+                y=alt.Y(f"{metric_column}:Q", title=axis_title),
+                color=alt.Color("model_id:N", title="模型"),
+                tooltip=[
+                    alt.Tooltip("timestamp:T", title="时间", format="%Y-%m-%d %H:%M"),
+                    alt.Tooltip("model_id:N", title="模型"),
+                    alt.Tooltip(f"{metric_column}:Q", title=str(metric_label), format=",.2f"),
+                ],
+            )
+            .properties(height=340)
+        )
+        st.altair_chart(chart, width="stretch")
+    with diagnosis_col:
+        st.markdown("#### 最新容量判断")
+        st.caption("按风险优先级查看每个模型当前最需要关注的问题。")
+        for _, row in latest.assign(_priority=state_priority).sort_values(["_priority", "model_id"]).iterrows():
+            badge_color = "red" if row["capacity_state"] == "容量风险" else "orange"
+            with st.container(border=True):
+                heading, badge = st.columns([3, 1], vertical_alignment="center")
+                heading.markdown(f"**{row['model_id']}**")
+                with badge:
+                    _capacity_state_badge(row["capacity_state"], badge_color)
+                st.write(row["diagnosis"])
+                st.caption(
+                    f"实例 {int(row['instance_count'])} · 忙时并发 {int(row['running_max_busy'])} · "
+                    f"NPU 峰值 {row['npu_max']:.0f}% · HBM 余量 {row['hbm_headroom_pct']:.1f}%"
+                )
 
-    left, right = st.columns([1.4, 1], gap="large")
+    left, right = st.columns([1.2, 1.15], gap="large", vertical_alignment="top")
     with left:
-        st.markdown("#### 匿名实例 NPU 热力图")
+        st.markdown("#### 实例负载分布")
+        st.caption("颜色越深表示该匿名实例在对应时段的 NPU 峰值越高。")
         heatmap_model = st.selectbox(
-            "热力图模型",
+            "查看模型",
             sorted(instance_hourly["model_id"].unique()),
             key="resource_heatmap_model",
         )
@@ -1672,48 +1947,59 @@ def render_resource_capacity(
         )
         st.altair_chart(heatmap, width="stretch")
     with right:
-        st.markdown("#### 最新容量判断")
-        for _, row in latest.sort_values("model_id").iterrows():
-            icon = ":material/error:" if row["capacity_state"] == "容量风险" else ":material/warning:"
-            with st.container(border=True):
-                st.markdown(f"**{row['model_id']} · {row['capacity_state']}**")
-                st.write(row["diagnosis"])
-                st.caption(
-                    f"实例 {int(row['instance_count'])} · 忙时并发 {int(row['running_max_busy'])} · "
-                    f"NPU 峰值 {row['npu_max']:.0f}% · HBM {row['hbm_pct']:.2f}% {icon}"
-                )
+        st.markdown("#### 模型容量概览")
+        st.caption("先看状态和余量，需要复核时再展开完整技术数据。")
+        st.dataframe(
+            latest.sort_values(["hbm_headroom_pct", "model_id"]),
+            column_order=["model_id", "capacity_state", "instance_count", "hbm_headroom_pct", "npu_max"],
+            column_config={
+                "model_id": st.column_config.TextColumn("模型", pinned=True, width="medium"),
+                "capacity_state": st.column_config.TextColumn("状态", width="small"),
+                "instance_count": st.column_config.NumberColumn("实例", width="small"),
+                "hbm_headroom_pct": st.column_config.NumberColumn("显存余量", format="%.1f%%", width="small"),
+                "npu_max": st.column_config.NumberColumn("NPU峰值", format="%.0f%%", width="small"),
+            },
+            hide_index=True,
+            height=330,
+        )
 
-    st.markdown("#### 容量与资源明细")
-    st.dataframe(
-        latest.sort_values(["capacity_state", "model_id"]),
-        column_order=[
-            "model_id", "capacity_state", "instance_count", "running_max_busy",
-            "waiting_max_busy", "concurrency_ratio", "ttft_mean_ms",
-            "tokens_per_second_mean", "npu_mean", "npu_p95", "npu_max",
-            "cache_pct", "hbm_pct", "hbm_headroom_pct", "diagnosis",
-        ],
-        column_config={
-            "model_id": "模型",
-            "capacity_state": "容量状态",
-            "instance_count": "实例数",
-            "running_max_busy": "忙时并发",
-            "waiting_max_busy": "最大等待",
-            "concurrency_ratio": st.column_config.ProgressColumn(
-                "并发/实例", min_value=0, max_value=1, format="%.1f"
-            ),
-            "ttft_mean_ms": st.column_config.NumberColumn("平均 TTFT", format="%,.0f ms"),
-            "tokens_per_second_mean": st.column_config.NumberColumn("服务吞吐", format="%.2f token/s"),
-            "npu_mean": st.column_config.NumberColumn("平均 NPU", format="%.1f%%"),
-            "npu_p95": st.column_config.NumberColumn("NPU P95", format="%.1f%%"),
-            "npu_max": st.column_config.NumberColumn("NPU 峰值", format="%.0f%%"),
-            "cache_pct": st.column_config.NumberColumn("Cache", format="%.2f%%"),
-            "hbm_pct": st.column_config.NumberColumn("HBM", format="%.2f%%"),
-            "hbm_headroom_pct": st.column_config.NumberColumn("HBM 余量", format="%.2f%%"),
-            "diagnosis": "诊断说明",
-        },
-        hide_index=True,
-        height=280,
-    )
+    with st.expander("查看完整容量与资源明细"):
+        st.caption("以下为容量判断使用的技术字段，供排障和数据复核。")
+        st.dataframe(
+            latest.sort_values(["capacity_state", "model_id"]),
+            column_order=[
+                "model_id", "capacity_state", "instance_count", "running_max_busy",
+                "waiting_max_busy", "concurrency_ratio", "ttft_mean_ms",
+                "tokens_per_second_mean", "npu_mean", "npu_p95", "npu_max",
+                "cache_pct", "hbm_pct", "hbm_headroom_pct", "diagnosis",
+            ],
+            column_config={
+                "model_id": "模型",
+                "capacity_state": "容量状态",
+                "instance_count": "实例数",
+                "running_max_busy": "忙时并发",
+                "waiting_max_busy": "最大等待",
+                "concurrency_ratio": st.column_config.ProgressColumn("并发/实例", min_value=0, max_value=1, format="%.1f"),
+                "ttft_mean_ms": st.column_config.NumberColumn("平均 TTFT", format="%,.0f ms"),
+                "tokens_per_second_mean": st.column_config.NumberColumn("服务吞吐", format="%.2f token/s"),
+                "npu_mean": st.column_config.NumberColumn("平均 NPU", format="%.1f%%"),
+                "npu_p95": st.column_config.NumberColumn("NPU P95", format="%.1f%%"),
+                "npu_max": st.column_config.NumberColumn("NPU 峰值", format="%.0f%%"),
+                "cache_pct": st.column_config.NumberColumn("Cache", format="%.2f%%"),
+                "hbm_pct": st.column_config.NumberColumn("HBM", format="%.2f%%"),
+                "hbm_headroom_pct": st.column_config.NumberColumn("HBM 余量", format="%.2f%%"),
+                "diagnosis": "诊断说明",
+            },
+            hide_index=True,
+            height=300,
+        )
+        st.download_button(
+            "下载容量诊断原始数据",
+            latest.to_csv(index=False).encode("utf-8-sig"),
+            f"capacity_diagnosis_{latest_date:%Y%m%d}.csv",
+            "text/csv",
+            icon=":material/download:",
+        )
 
 
 def _active_detection_settings(
@@ -2332,7 +2618,7 @@ def main() -> None:
         render_cost(operating)
     elif module == "能力校准":
         render_calibration(profiles, capability, diagnosis, probe_runs, probe_events)
-    elif module == "资源与容量诊断":
+    elif module == "容量诊断":
         render_resource_capacity(
             resource_model,
             resource_instances,

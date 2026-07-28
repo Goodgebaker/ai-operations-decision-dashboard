@@ -41,8 +41,8 @@ class DashboardSmokeTests(unittest.TestCase):
             "运营总览": "运营总览",
             "性能诊断": "性能诊断",
             "成本分析": "成本分析",
-            "能力校准": "主动拨测与模型能力校准",
-            "资源与容量诊断": "资源与容量诊断",
+            "能力校准": "模型能力校准",
+            "容量诊断": "容量诊断",
         }
         app = AppTest.from_file(
             str(PROJECT_ROOT / "dashboard" / "app.py"),
@@ -59,12 +59,19 @@ class DashboardSmokeTests(unittest.TestCase):
                 self.assertIn(expected_heading, [item.value for item in app.subheader])
                 if module == "能力校准":
                     metric_labels = [item.label for item in app.metric]
-                    self.assertIn("综合路由评分", metric_labels)
-                    self.assertIn("真实表现指数", metric_labels)
-                    self.assertIn("主动拨测指数", metric_labels)
+                    self.assertIn("真实表现", metric_labels)
+                    self.assertIn("主动检查", metric_labels)
+                    self.assertNotIn("主动拨测指数", metric_labels)
                     self.assertNotIn("可信度评分", metric_labels)
+                    self.assertNotIn("评分依据", [item.label for item in app.expander])
+                    self.assertIn("查看标准化测试明细", [item.label for item in app.expander])
+                    self.assertIn("查看完整模型画像", [item.label for item in app.expander])
                     self.assertIn(
                         "查看原始诊断证据与完整数据",
+                        [item.label for item in app.expander],
+                    )
+                    self.assertIn(
+                        "查看近 7 次诊断轨迹",
                         [item.label for item in app.expander],
                     )
                 if module == "性能诊断":
@@ -78,13 +85,12 @@ class DashboardSmokeTests(unittest.TestCase):
                     )
                     self.assertIn("添加对比模型", [item.label for item in app.selectbox])
                     self.assertIn("与上一周期对比", [item.label for item in app.toggle])
-                    markdown_values = [item.value for item in app.markdown]
-                    self.assertIn("**综合体验**", markdown_values)
-                    self.assertIn("**响应速度**", markdown_values)
-                    self.assertIn("**稳定性**", markdown_values)
-                    self.assertIn("P50", [item.label for item in app.metric])
-                    self.assertIn("P95", [item.label for item in app.metric])
-                    self.assertIn("P99", [item.label for item in app.metric])
+                    metric_labels = [item.label for item in app.metric]
+                    self.assertIn("响应速度", metric_labels)
+                    self.assertIn("稳定性", metric_labels)
+                    self.assertIn("P50", metric_labels)
+                    self.assertIn("P95", metric_labels)
+                    self.assertIn("P99", metric_labels)
                     self.assertIn(
                         "下载当前窗口原始数据",
                         [item.label for item in app.get("download_button")],
@@ -93,11 +99,9 @@ class DashboardSmokeTests(unittest.TestCase):
                     self.assertIn("时间范围", [item.label for item in app.segmented_control])
                     self.assertIn("添加对比模型", [item.label for item in app.selectbox])
                     self.assertIn("与上一周期对比", [item.label for item in app.toggle])
-                    markdown_values = [item.value for item in app.markdown]
-                    self.assertIn("**成本总评分**", markdown_values)
-                    self.assertIn("**成本效率**", markdown_values)
-                    self.assertIn("**质量保障**", markdown_values)
                     metric_labels = [item.label for item in app.metric]
+                    self.assertIn("成本效率", metric_labels)
+                    self.assertIn("质量保障", metric_labels)
                     self.assertIn("单请求成本", metric_labels)
                     self.assertIn("千 Token 成本", metric_labels)
                     self.assertIn("历史基线倍数", metric_labels)
@@ -105,9 +109,16 @@ class DashboardSmokeTests(unittest.TestCase):
                         "下载当前窗口原始数据",
                         [item.label for item in app.get("download_button")],
                     )
-                if module == "资源与容量诊断":
-                    self.assertIn("最新真实数据", [item.label for item in app.metric])
+                if module == "容量诊断":
                     self.assertIn("资源趋势指标", [item.label for item in app.segmented_control])
+                    self.assertIn(
+                        "查看完整容量与资源明细",
+                        [item.label for item in app.expander],
+                    )
+                    self.assertIn(
+                        "下载容量诊断原始数据",
+                        [item.label for item in app.get("download_button")],
+                    )
 
     def test_hidden_modules_are_not_in_navigation(self) -> None:
         app = AppTest.from_file(
@@ -119,7 +130,7 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertNotIn("智能检测", labels)
         self.assertNotIn("诊断解释", labels)
         self.assertEqual(5, len([label for label in labels if label in {
-            "运营总览", "性能诊断", "成本分析", "能力校准", "资源与容量诊断"
+            "运营总览", "性能诊断", "成本分析", "能力校准", "容量诊断"
         }]))
 
     def test_overview_exposes_simplified_decision_context(self) -> None:
@@ -129,7 +140,7 @@ class DashboardSmokeTests(unittest.TestCase):
         ).run()
 
         self.assertEqual([], list(app.exception))
-        self.assertIn("今日决策摘要", [item.value for item in app.subheader])
+        self.assertNotIn("今日决策摘要", [item.value for item in app.subheader])
         self.assertNotIn("外部容量基准", [item.value for item in app.subheader])
         self.assertIn("观察窗口", [item.label for item in app.segmented_control])
         overview_window = next(
@@ -148,8 +159,7 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertNotIn("稳定性评分", [item.label for item in app.metric])
         ranking_styles = app.dataframe[0].proto.arrow_data.styler.styles
         self.assertIn("#dcfce7", ranking_styles)
-        self.assertIn("#fef3c7", ranking_styles)
-        self.assertIn("#fee2e2", ranking_styles)
+        self.assertIn("#fef9c3", ranking_styles)
 
     def test_overall_health_gauge_ignores_model_filter(self) -> None:
         app = AppTest.from_file(

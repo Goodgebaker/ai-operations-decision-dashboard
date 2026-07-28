@@ -18,6 +18,15 @@ dataframeHeaderBackgroundColor = "#EDF2F7"
 dataframeBorderColor = "#D8E0EA"
 chartCategoricalColors = ["#155EEF", "#12B76A", "#F79009", "#7A5AF8", "#D92D20", "#06AED4"]
 chartSequentialColors = ["#EFF4FF", "#D1E0FF", "#B2CCFF", "#84ADFF", "#528BFF", "#2970FF", "#155EEF", "#004EEB", "#0040C1", "#00359E"]
+yellowColor = "#CA8A04"
+yellowBackgroundColor = "#FEF9C3"
+yellowTextColor = "#854D0E"
+orangeColor = "#EA580C"
+orangeBackgroundColor = "#FFEDD5"
+orangeTextColor = "#9A3412"
+redColor = "#6b080c"
+redBackgroundColor = "#F3E4DF"
+redTextColor = "#6b080c"
 
 [theme.sidebar]
 backgroundColor = "#F4F7FB"
