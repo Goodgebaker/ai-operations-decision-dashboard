@@ -67,11 +67,16 @@ class DailyOperatingMetricTests(unittest.TestCase):
         daily = build_daily_operating_metrics(logs, hourly)
         fast = daily[daily["model_id"] == "model-fast"].sort_values("date")
         self.assertEqual(fast["cost_baseline_ready"].tolist(), [False, False, False, True])
+        self.assertEqual(fast["latency_baseline_ready"].tolist(), [False, False, False, True])
         self.assertEqual(fast.iloc[0]["cost_trend_ratio"], 1.0)
         expected = fast.iloc[3]["cost_per_request"] / fast.iloc[:3][
             "cost_per_request"
         ].median()
         self.assertAlmostEqual(fast.iloc[3]["cost_trend_ratio"], expected, places=4)
+        expected_p95 = fast.iloc[3]["p95_latency_ms"] / fast.iloc[:3][
+            "p95_latency_ms"
+        ].median()
+        self.assertAlmostEqual(fast.iloc[3]["p95_latency_ratio"], expected_p95, places=4)
 
     def test_invalid_baseline_window_is_rejected(self) -> None:
         logs, hourly = sample_inputs()
@@ -115,7 +120,7 @@ class ModelOperatingScoreTests(unittest.TestCase):
         self.assertTrue(scored[score_columns].notna().all().all())
         self.assertTrue(scored[score_columns].apply(lambda column: column.between(0, 100).all()).all())
         latest = build_latest_snapshot(scored)
-        self.assertEqual(latest.iloc[0]["model_id"], "model-fast")
+        self.assertEqual(set(latest["model_id"]), {"model-fast", "model-slow"})
         self.assertEqual(latest["health_rank"].tolist(), [1, 2])
         self.assertTrue(set(latest["health_level"]).issubset({"高风险", "需关注", "健康", "优秀"}))
 

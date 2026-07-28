@@ -176,9 +176,9 @@ python src/probe_scheduler.py
 
 `model_operations.py` 使用原始调用日志计算准确的日级 P50/P95/P99、成功率和
 成本指标，使用模型小时特征计算日内波动，再按 `Scoring Policy` 生成性能、
-稳定性、成本效率、成本性能和健康指数。成本趋势以单请求成本相对前 7 个
-历史日中位数计算，至少需要 3 个历史日；不足时使用 1.0 中性值并显式标记
-`cost_baseline_ready=false`。
+稳定性、成本效率、成本性能和健康指数。响应速度和成本效率均相对各模型自身
+前 7 个历史日中位数评分：等于基线约为 80 分，优于或弱于基线时连续升降；
+至少需要 3 个历史日，不足时使用 1.0 中性比值并显式标记 readiness 字段。
 
 `model_profile.py` 将真实调用、高频可用性探针和 `traffic_type=capability_probe`
 的标准任务结果按模型和日期对齐。高频探针判断模型服务状态，标准任务判断
@@ -212,7 +212,7 @@ streamlit run dashboard/app.py
 - `scripts/rebuild_demo.sh`：重建模拟数据、检测结果、模型评分与画像的完整流水线。
 - `.github/workflows/ci.yml`：公开仓库持续集成检查。
 - `docs/ai_monitoring_metric_dictionary.xlsx`：指标、单条件规则、复合规则和规则条件。
-- `data/synthetic_logs_v2.csv`：30 天模拟调用日志。
+- `data/synthetic_logs_v2.csv`：90 天模拟调用日志，包含阶段性起伏、短时冲击和跨周期异常。
 - `data/ground_truth.csv`：与日志特征分离的 6 个异常事件标注。
 - `outputs/features/`：平台、客户、模型、供应商和 API Key 特征表。
 - `outputs/composite_alerts.csv`：复合规则告警与阈值证据。

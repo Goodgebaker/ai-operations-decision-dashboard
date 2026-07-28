@@ -195,13 +195,24 @@ def build_daily_probe_metrics(
         daily["probe_p50_latency_ms"] = daily["availability_p50_latency_ms"]
         daily["probe_p95_latency_ms"] = daily["availability_p95_latency_ms"]
         daily["probe_p99_latency_ms"] = daily["availability_p99_latency_ms"]
+    daily = daily.sort_values(["model_id", "date"])
+    for percentile in ("p50", "p95", "p99"):
+        value_column = f"probe_{percentile}_latency_ms"
+        ratio_column = f"p{percentile[1:]}_latency_ratio"
+        baseline = daily.groupby("model_id", group_keys=False)[value_column].transform(
+            lambda values: values.shift(1).rolling(7, min_periods=3).median()
+        )
+        daily[f"probe_{percentile}_latency_baseline_ms"] = baseline
+        daily[ratio_column] = (
+            daily[value_column] / baseline.replace(0, np.nan)
+        ).where(baseline.notna(), 1.0)
     daily["probe_latency_score"] = daily.apply(
         lambda row: calculate_family_score(
             "latency",
             {
-                "p50_latency_ms": row["probe_p50_latency_ms"],
-                "p95_latency_ms": row["probe_p95_latency_ms"],
-                "p99_latency_ms": row["probe_p99_latency_ms"],
+                "p50_latency_ratio": row["p50_latency_ratio"],
+                "p95_latency_ratio": row["p95_latency_ratio"],
+                "p99_latency_ratio": row["p99_latency_ratio"],
             },
             policy,
         ),

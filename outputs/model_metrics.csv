@@ -1,4 +1,4 @@
 model_id,request_count,total_tokens,success_rate,p95_latency_ms
-DeepSeek-V4,9313,6662315,93.33,2034
-Minimax-M2.5,384,292259,92.71,2015
-Qwen3.6-35B-A3B,303,228642,94.72,2015
+DeepSeek-V4,9272,6764837,93.79,2032
+Minimax-M2.5,400,275736,92.75,1942
+Qwen3.6-35B-A3B,328,240559,94.82,1992

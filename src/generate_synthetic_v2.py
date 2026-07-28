@@ -1,4 +1,4 @@
-"""生成30天AI中台模拟日志与独立异常真值。"""
+"""生成90天AI中台模拟日志与独立异常真值。"""
 
 from __future__ import annotations
 
@@ -58,15 +58,61 @@ def _build_timestamps(
     minutes = pd.date_range(start, periods=days * 24 * 60, freq="min")
     hours = minutes.hour.to_numpy()
     weekdays = minutes.dayofweek.to_numpy()
+    day_indices = np.arange(len(minutes)) // (24 * 60)
 
+    # 每次生成都保留典型的昼夜与周末规律，但让业务周期本身有所不同。
+    # 日级因子保留均值回归，但允许业务量出现更明显的自然起伏。
+    daily_factors = np.empty(days, dtype=float)
+    daily_factors[0] = rng.uniform(0.88, 1.12)
+    for day_index in range(1, days):
+        daily_factors[day_index] = (
+            0.72 * daily_factors[day_index - 1]
+            + 0.28 * rng.normal(1.0, 0.20)
+        )
+    daily_factors = np.clip(daily_factors, 0.62, 1.48)
+
+    # 多段活动、批处理、节假日或流量迁移形成持续数日的抬升与回落。
+    for _ in range(max(3, days // 18)):
+        campaign_start = int(rng.integers(3, max(4, days - 3)))
+        campaign_days = int(rng.integers(2, 7))
+        campaign_end = min(days, campaign_start + campaign_days)
+        daily_factors[campaign_start:campaign_end] *= rng.uniform(0.72, 1.52)
+
+    # 少量孤立异常日让曲线不呈规则的平滑形态。
+    shock_count = max(4, days // 14)
+    shock_days = rng.choice(np.arange(2, days - 1), size=shock_count, replace=False)
+    daily_factors[shock_days] *= rng.uniform(0.58, 1.72, size=shock_count)
+    daily_factors = np.clip(daily_factors, 0.48, 1.85)
+
+    period_scales = rng.uniform(0.90, 1.10, size=5)
     hour_factor = np.select(
         [hours < 6, hours < 9, hours < 18, hours < 22],
-        [0.30, 0.85, 1.45, 0.95],
-        default=0.50,
+        [
+            0.30 * period_scales[0],
+            0.85 * period_scales[1],
+            1.45 * period_scales[2],
+            0.95 * period_scales[3],
+        ],
+        default=0.50 * period_scales[4],
     )
-    weekday_factor = np.where(weekdays < 5, 1.0, 0.72)
-    gradual_growth = np.linspace(0.92, 1.08, len(minutes))
-    rates = base_rpm * hour_factor * weekday_factor * gradual_growth
+    weekend_scale = rng.uniform(0.62, 0.80)
+    weekday_factor = np.where(weekdays < 5, 1.0, weekend_scale)
+    period_growth = np.linspace(rng.uniform(0.88, 1.00), rng.uniform(1.00, 1.16), len(minutes))
+    rates = (
+        base_rpm
+        * hour_factor
+        * weekday_factor
+        * period_growth
+        * daily_factors[day_indices]
+    )
+
+    # 分钟级短时冲击模拟突发批任务、限流和流量切换，持续15分钟到4小时。
+    short_event_factor = np.ones(len(minutes), dtype=float)
+    for _ in range(max(8, days // 7)):
+        event_start = int(rng.integers(0, max(1, len(minutes) - 240)))
+        event_minutes = int(rng.integers(15, 241))
+        short_event_factor[event_start:event_start + event_minutes] *= rng.uniform(0.35, 2.60)
+    rates *= np.clip(short_event_factor, 0.25, 3.0)
     counts = rng.poisson(rates)
 
     repeated = np.repeat(minutes.to_numpy(), counts)
@@ -116,6 +162,72 @@ def _base_logs(
     fallback_models = rng.choice(model_ids, size=fallback_mask.sum(), p=model_weights)
     response_models[fallback_mask] = fallback_models
     providers = pd.Series(response_models).map(MODEL_PROVIDER).to_numpy()
+    day_progress = (
+        (timestamps.normalize() - start.normalize()).days.to_numpy()
+        / max(days - 1, 1)
+    )
+
+    # 每次把三个模型随机分配为“改善、平稳、承压”三种周期状态。这样既保证
+    # 场景之间有业务上可见的差异，也避免三个模型同时无缘由地大幅恶化。
+    scenario_names = rng.permutation(["improving", "steady", "stressed"])
+    model_scenarios = dict(zip(model_ids, scenario_names, strict=False))
+    scenario_labels = {"improving": "逐步改善", "steady": "平稳运行", "stressed": "持续承压"}
+    latency_ranges = {
+        "improving": ((1.15, 1.32), (0.68, 0.84)),
+        "steady": ((0.94, 1.06), (0.92, 1.10)),
+        "stressed": ((0.90, 1.04), (1.42, 1.72)),
+    }
+    failure_ranges = {
+        "improving": ((0.050, 0.075), (0.008, 0.022)),
+        "steady": ((0.025, 0.045), (0.025, 0.050)),
+        "stressed": ((0.025, 0.045), (0.085, 0.125)),
+    }
+
+    latency_start: dict[str, float] = {}
+    latency_end: dict[str, float] = {}
+    failure_start: dict[str, float] = {}
+    failure_end: dict[str, float] = {}
+    for model in model_ids:
+        scenario = model_scenarios[model]
+        latency_start_range, latency_end_range = latency_ranges[scenario]
+        failure_start_range, failure_end_range = failure_ranges[scenario]
+        latency_start[model] = rng.uniform(*latency_start_range)
+        latency_end[model] = rng.uniform(*latency_end_range)
+        failure_start[model] = rng.uniform(*failure_start_range)
+        failure_end[model] = rng.uniform(*failure_end_range)
+
+    # 后半段逐渐体现改善或承压，最近 7 天最明显，符合容量或版本变化累积影响。
+    scenario_progress = np.power(day_progress, 1.35)
+    model_latency_factor = np.array(
+        [
+            latency_start[model]
+            + (latency_end[model] - latency_start[model]) * progress
+            for model, progress in zip(response_models, scenario_progress, strict=False)
+        ]
+    )
+    environment_phase = rng.uniform(0, 2 * np.pi)
+    environment_factor = 1.0 + 0.045 * np.sin(day_progress * 4 * np.pi + environment_phase)
+
+    # 每个模型都有独立的短期性能扰动，避免90天曲线只表现为单调改善或恶化。
+    timestamp_day_index = (timestamps.normalize() - start.normalize()).days.to_numpy()
+    model_daily_latency: dict[str, np.ndarray] = {}
+    model_daily_failure: dict[str, np.ndarray] = {}
+    for model in model_ids:
+        latency_daily = np.ones(days, dtype=float)
+        failure_daily = np.ones(days, dtype=float)
+        for _ in range(max(5, days // 12)):
+            event_day = int(rng.integers(2, days - 1))
+            event_length = int(rng.integers(1, 4))
+            event_end = min(days, event_day + event_length)
+            latency_daily[event_day:event_end] *= rng.uniform(0.72, 1.65)
+            failure_daily[event_day:event_end] *= rng.uniform(0.55, 2.50)
+        model_daily_latency[model] = np.clip(latency_daily, 0.65, 1.85)
+        model_daily_failure[model] = np.clip(failure_daily, 0.45, 3.0)
+
+    irregular_latency_factor = np.array(
+        [model_daily_latency[model][day] for model, day in zip(response_models, timestamp_day_index, strict=False)]
+    )
+    model_latency_factor *= irregular_latency_factor
 
     customer_scale = pd.Series(customer_ids).map(
         {customer: 0.8 + index * 0.06 for index, customer in enumerate(customers)}
@@ -149,24 +261,47 @@ def _base_logs(
     observed_ttft_ms *= rng.normal(1.0, 0.05, rows).clip(0.75, 1.30)
     model_latency = pd.Series(response_models).map(MODEL_LATENCY).to_numpy()
     first_token_latency_ms = np.maximum(
-        (observed_ttft_ms + queue_latency_ms + rng.normal(0, 35, rows)).astype(int),
+        (
+            (observed_ttft_ms + queue_latency_ms + rng.normal(0, 35, rows))
+            * model_latency_factor
+            * environment_factor
+        ).astype(int),
         60,
     )
     generation_ms = output_tokens * rng.uniform(2.0, 4.5, rows)
     latency_ms = np.maximum(
         (
-            np.maximum(model_latency, first_token_latency_ms)
-            + queue_latency_ms
-            + generation_ms
-            + rng.normal(0, 180, rows)
+            (
+                np.maximum(model_latency, first_token_latency_ms)
+                + queue_latency_ms
+                + generation_ms
+                + rng.normal(0, 180, rows)
+            )
+            * model_latency_factor
+            * environment_factor
         ).astype(int),
         first_token_latency_ms + 30,
     )
 
-    status_codes = rng.choice(
-        [200, 400, 401, 429, 500, 503],
-        size=rows,
-        p=[0.952, 0.012, 0.004, 0.012, 0.012, 0.008],
+    failure_probability = np.array(
+        [
+            failure_start[model]
+            + (failure_end[model] - failure_start[model]) * progress
+            for model, progress in zip(response_models, scenario_progress, strict=False)
+        ]
+    )
+    failure_probability *= 1.0 + 0.12 * np.sin(
+        day_progress * 4 * np.pi + environment_phase
+    )
+    failure_probability *= np.array(
+        [model_daily_failure[model][day] for model, day in zip(response_models, timestamp_day_index, strict=False)]
+    )
+    failed_mask = rng.random(rows) < np.clip(failure_probability, 0.008, 0.10)
+    status_codes = np.full(rows, 200, dtype=int)
+    status_codes[failed_mask] = rng.choice(
+        [400, 401, 429, 500, 503],
+        size=int(failed_mask.sum()),
+        p=[0.25, 0.08, 0.25, 0.25, 0.17],
     )
     retry_count = np.where(
         status_codes == 200,
@@ -192,6 +327,9 @@ def _base_logs(
             "request_model": request_models,
             "response_model": response_models,
             "model_id": response_models,
+            "simulation_scenario": pd.Series(response_models).map(
+                lambda model: scenario_labels[model_scenarios[model]]
+            ).to_numpy(),
             "provider": providers,
             "channel_id": rng.choice(
                 ["web", "app", "api"], rows, p=[0.18, 0.27, 0.55]
@@ -241,10 +379,15 @@ def _inject_anomalies(
     logs: pd.DataFrame,
     rng: np.random.Generator,
     start: pd.Timestamp,
+    days: int,
 ) -> tuple[pd.DataFrame, list[GroundTruth]]:
     truth: list[GroundTruth] = []
 
-    key_start = start + pd.Timedelta(days=11, hours=3, minutes=15)
+    def event_time(fraction: float, *, hours: int, minutes: int = 0) -> pd.Timestamp:
+        day = min(days - 2, max(1, int(round((days - 1) * fraction))))
+        return start + pd.Timedelta(days=day, hours=hours, minutes=minutes)
+
+    key_start = event_time(0.12, hours=3, minutes=15)
     logs = _append_key_leak_burst(logs, rng, key_start)
     truth.append(
         GroundTruth(
@@ -256,7 +399,7 @@ def _inject_anomalies(
         )
     )
 
-    congestion_start = start + pd.Timedelta(days=15, hours=16)
+    congestion_start = event_time(0.29, hours=16)
     congestion_end = congestion_start + pd.Timedelta(hours=1, minutes=59, seconds=59)
     mask = logs["timestamp"].between(congestion_start, congestion_end) & logs[
         "model_id"
@@ -276,7 +419,7 @@ def _inject_anomalies(
         )
     )
 
-    outage_start = start + pd.Timedelta(days=19, hours=10)
+    outage_start = event_time(0.46, hours=10)
     outage_end = outage_start + pd.Timedelta(hours=1, minutes=59, seconds=59)
     mask = logs["timestamp"].between(outage_start, outage_end) & logs[
         "provider"
@@ -297,7 +440,7 @@ def _inject_anomalies(
         )
     )
 
-    token_start = start + pd.Timedelta(days=23, hours=14)
+    token_start = event_time(0.61, hours=14)
     token_end = token_start + pd.Timedelta(hours=1, minutes=59, seconds=59)
     mask = logs["timestamp"].between(token_start, token_end) & logs[
         "customer_id"
@@ -313,7 +456,7 @@ def _inject_anomalies(
         )
     )
 
-    error_start = start + pd.Timedelta(days=26, hours=9)
+    error_start = event_time(0.76, hours=9)
     error_end = error_start + pd.Timedelta(minutes=59, seconds=59)
     mask = logs["timestamp"].between(error_start, error_end) & logs[
         "customer_id"
@@ -333,7 +476,7 @@ def _inject_anomalies(
         )
     )
 
-    cost_start = start + pd.Timedelta(days=28, hours=1)
+    cost_start = event_time(0.91, hours=1)
     cost_end = cost_start + pd.Timedelta(hours=2, minutes=59, seconds=59)
     mask = logs["timestamp"].between(cost_start, cost_end) & logs[
         "customer_id"
@@ -353,7 +496,7 @@ def _inject_anomalies(
 
 
 def build_dataset(
-    days: int = 30,
+    days: int = 90,
     base_rpm: float = 1.35,
     seed: int = 20260714,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -370,7 +513,7 @@ def build_dataset(
         else pd.Timestamp("2026-06-01 00:00:00")
     )
     logs = _base_logs(rng, start, days, base_rpm)
-    logs, truth = _inject_anomalies(logs, rng, start)
+    logs, truth = _inject_anomalies(logs, rng, start, days)
 
     logs["total_tokens"] = logs["input_tokens"] + logs["output_tokens"]
     logs["estimated_cost"] = [
@@ -395,8 +538,8 @@ def build_dataset(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="生成30天模拟日志及异常真值")
-    parser.add_argument("--days", type=int, default=30)
+    parser = argparse.ArgumentParser(description="生成90天模拟日志及异常真值")
+    parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--base-rpm", type=float, default=1.35)
     parser.add_argument("--seed", type=int, default=20260714)
     parser.add_argument("--logs-output", type=Path, default=DEFAULT_LOG_OUTPUT)

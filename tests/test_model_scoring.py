@@ -9,6 +9,7 @@ from src.model_scoring import (
     clamp_score,
     score_higher_is_better,
     score_lower_is_better,
+    score_relative_lower,
     score_volatility,
 )
 
@@ -73,6 +74,13 @@ class PrimitiveScoreTests(unittest.TestCase):
         self.assertEqual(score_volatility(0.25, 0.5), 50)
         self.assertEqual(score_volatility(0.5, 0.5), 0)
         self.assertEqual(score_volatility(0.8, 0.5), 0)
+
+    def test_relative_lower_centers_normal_baseline_at_80(self) -> None:
+        self.assertEqual(score_relative_lower(1.0), 80)
+        self.assertEqual(score_relative_lower(0.5), 100)
+        self.assertEqual(score_relative_lower(1.25), 70)
+        self.assertEqual(score_relative_lower(1.5), 60)
+        self.assertEqual(score_relative_lower(3.0), 0)
 
     def test_non_finite_and_invalid_values_are_rejected(self) -> None:
         for value in (float("nan"), float("inf"), True):

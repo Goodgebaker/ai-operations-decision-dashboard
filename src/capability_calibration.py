@@ -567,7 +567,7 @@ def main() -> None:
     parser.add_argument("--run-output", type=Path, default=DEFAULT_RUN_OUTPUT)
     parser.add_argument("--score-output", type=Path, default=DEFAULT_SCORE_OUTPUT)
     parser.add_argument("--start")
-    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--seed", type=int, default=20260716)
     args = parser.parse_args()
 

@@ -85,9 +85,8 @@ def build_daily_operating_metrics(
 ) -> pd.DataFrame:
     """构建模型日级运营指标。
 
-    ``cost_trend_ratio`` 使用当日单请求成本除以前序窗口的单请求成本中位数，
-    从而避免调用量变化被误判为价格变化。历史不足时以1.0作为中性输入，并由
-    ``cost_baseline_ready`` 明确标记，避免把默认值误认为已有稳定基线。
+    成本与P50/P95/P99延迟都使用当前值除以前序窗口中位数形成相对自身基线。
+    历史不足时比值以1.0作为80分的中性输入，并用 readiness 字段明确标记。
     """
 
     _require_columns(logs, LOG_REQUIRED_COLUMNS, "调用日志")
@@ -120,6 +119,7 @@ def build_daily_operating_metrics(
         / daily["total_tokens"].replace(0, np.nan)
         * 1000
     )
+    daily["tokens_per_request"] = daily["total_tokens"] / daily["request_count"]
 
     hourly = hourly_features.copy()
     hourly["hour"] = pd.to_datetime(hourly["hour"])
@@ -143,16 +143,37 @@ def build_daily_operating_metrics(
     ] = np.nan
     daily = daily.merge(stability, on=["date", "model_id"], how="left", validate="one_to_one")
 
-    baseline = daily.groupby("model_id", group_keys=False)["cost_per_request"].transform(
-        lambda values: values.shift(1).rolling(
-            baseline_days, min_periods=minimum_baseline_days
-        ).median()
+    baseline_columns = {
+        "cost_per_request": "cost_per_request_ratio",
+        "cost_per_1k_tokens": "cost_per_1k_tokens_ratio",
+        "tokens_per_request": "tokens_per_request_ratio",
+        "p50_latency_ms": "p50_latency_ratio",
+        "p95_latency_ms": "p95_latency_ratio",
+        "p99_latency_ms": "p99_latency_ratio",
+    }
+    readiness_columns: dict[str, pd.Series] = {}
+    for value_column, ratio_column in baseline_columns.items():
+        baseline_column = f"{value_column}_baseline"
+        baseline = daily.groupby("model_id", group_keys=False)[value_column].transform(
+            lambda values: values.shift(1).rolling(
+                baseline_days, min_periods=minimum_baseline_days
+            ).median()
+        )
+        daily[baseline_column] = baseline
+        readiness_columns[ratio_column] = baseline.notna()
+        daily[ratio_column] = (
+            daily[value_column] / baseline.replace(0, np.nan)
+        ).where(baseline.notna(), 1.0)
+
+    daily["cost_baseline_per_request"] = daily["cost_per_request_baseline"]
+    daily["cost_baseline_ready"] = readiness_columns["cost_per_request_ratio"]
+    daily["latency_baseline_ready"] = (
+        readiness_columns["p50_latency_ratio"]
+        & readiness_columns["p95_latency_ratio"]
+        & readiness_columns["p99_latency_ratio"]
     )
-    daily["cost_baseline_per_request"] = baseline
-    daily["cost_baseline_ready"] = baseline.notna()
-    daily["cost_trend_ratio"] = (
-        daily["cost_per_request"] / baseline.replace(0, np.nan)
-    ).where(daily["cost_baseline_ready"], 1.0)
+    # 保留原字段名，兼容风险引擎与既有下载数据。
+    daily["cost_trend_ratio"] = daily["cost_per_request_ratio"]
     return _round_numeric(daily.sort_values(["date", "model_id"]).reset_index(drop=True))
 
 
@@ -189,9 +210,10 @@ def score_model_operations(
     """按配置生成成功、性能、成本和健康评分。"""
 
     required = {
-        "date", "model_id", "success_rate", "p50_latency_ms", "p95_latency_ms",
-        "p99_latency_ms", "latency_cv", "success_rate_std_pct",
-        "cost_per_request", "cost_per_1k_tokens", "cost_trend_ratio",
+        "date", "model_id", "success_rate", "p50_latency_ratio",
+        "p95_latency_ratio", "p99_latency_ratio", "latency_cv",
+        "success_rate_std_pct", "cost_per_request_ratio",
+        "cost_per_1k_tokens_ratio", "tokens_per_request_ratio",
     }
     _require_columns(daily_metrics, required, "模型日级运营指标")
     scored = daily_metrics.copy()

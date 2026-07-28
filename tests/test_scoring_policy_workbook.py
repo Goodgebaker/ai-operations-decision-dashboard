@@ -53,6 +53,46 @@ class ScoringPolicyWorkbookTests(unittest.TestCase):
         self.assertEqual(classify_score("risk", 60, self.policy), "高")
         self.assertEqual(classify_score("risk", 80, self.policy), "严重")
 
+    def test_relative_baselines_center_normal_performance_and_cost_near_80(self) -> None:
+        latency = calculate_family_score(
+            "latency",
+            {
+                "p50_latency_ratio": 1.0,
+                "p95_latency_ratio": 1.0,
+                "p99_latency_ratio": 1.0,
+            },
+            self.policy,
+        )
+        cost_efficiency = calculate_family_score(
+            "cost_efficiency",
+            {
+                "cost_per_request_ratio": 1.0,
+                "cost_per_1k_tokens_ratio": 1.0,
+                "tokens_per_request_ratio": 1.0,
+            },
+            self.policy,
+        )
+        cost_total = calculate_family_score(
+            "cost_performance",
+            {"quality_score": 95.0, "cost_efficiency_score": cost_efficiency},
+            self.policy,
+        )
+
+        self.assertEqual(latency, 80)
+        self.assertEqual(cost_efficiency, 80)
+        self.assertEqual(cost_total, 84.5)
+        cost_weights = {
+            rule.component: rule.weight
+            for rule in self.policy.rules_for("cost_performance")
+        }
+        self.assertEqual(cost_weights, {"quality_score": 0.3, "cost_efficiency_score": 0.7})
+        self.assertTrue(
+            all(
+                rule.tolerance_value == 0.25
+                for rule in self.policy.rules_for("cost_efficiency")
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -397,7 +397,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--hourly-output", type=Path, default=DEFAULT_HOURLY)
     parser.add_argument("--start")
-    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--seed", type=int, default=20260715)
     args = parser.parse_args()
 

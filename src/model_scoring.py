@@ -15,6 +15,7 @@ from typing import Iterable, Mapping
 VALID_DIRECTIONS = {
     "higher_better",
     "lower_better",
+    "relative_lower",
     "volatility",
     "passthrough",
 }
@@ -172,6 +173,23 @@ def score_lower_is_better(actual: float, target: float) -> float:
     return clamp_score(target_value / actual_value * 100.0)
 
 
+def score_relative_lower(
+    actual_ratio: float,
+    target_ratio: float = 1.0,
+    tolerance_ratio: float = 0.5,
+) -> float:
+    """相对自身基线评分：等于基线80分，每偏离半个容忍区间变化20分。"""
+
+    actual_value = _finite_number(actual_ratio, "actual_ratio")
+    target_value = _positive_number(target_ratio, "target_ratio")
+    tolerance_value = _positive_number(tolerance_ratio, "tolerance_ratio")
+    if actual_value < 0:
+        raise ValueError("actual_ratio 不能小于0")
+    return clamp_score(
+        80.0 + (target_value - actual_value) / tolerance_value * 20.0
+    )
+
+
 def score_volatility(actual: float, tolerance: float) -> float:
     """波动为0得100分，达到容忍上限时降为0分。"""
 
@@ -235,6 +253,14 @@ def _apply_rule(value: float, rule: ComponentRule) -> float:
         return score_higher_is_better(value, _required_rule_target(rule))
     if rule.direction == "lower_better":
         return score_lower_is_better(value, _required_rule_target(rule))
+    if rule.direction == "relative_lower":
+        if rule.tolerance_value is None:
+            raise ValueError(f"{rule.policy_id} 缺少 tolerance_value")
+        return score_relative_lower(
+            value,
+            _required_rule_target(rule),
+            rule.tolerance_value,
+        )
     if rule.direction == "volatility":
         if rule.tolerance_value is None:
             raise ValueError(f"{rule.policy_id} 缺少 tolerance_value")
@@ -245,9 +271,9 @@ def _apply_rule(value: float, rule: ComponentRule) -> float:
 def _validate_component_rule(rule: ComponentRule) -> None:
     if not 0 < rule.weight <= 1:
         raise ValueError(f"{rule.policy_id} weight 必须大于0且不超过1")
-    if rule.direction in {"higher_better", "lower_better"}:
+    if rule.direction in {"higher_better", "lower_better", "relative_lower"}:
         _required_rule_target(rule)
-    if rule.direction == "volatility":
+    if rule.direction in {"volatility", "relative_lower"}:
         if rule.tolerance_value is None:
             raise ValueError(f"{rule.policy_id} 缺少 tolerance_value")
         _positive_number(rule.tolerance_value, "tolerance_value")

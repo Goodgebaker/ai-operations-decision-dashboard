@@ -21,6 +21,7 @@ import pandas as pd
 import streamlit as st
 
 from src.external_benchmarks import build_capacity_profiles
+from src.demo_rebuild import DemoRebuildError, rebuild_demo_data
 from src.interactive_risk_policy import (
     build_signal_events,
     build_unknown_pattern_events,
@@ -702,8 +703,8 @@ def _render_decision_summary(
         with st.container(border=True, height="stretch", key="health_breakdown"):
             score_help = {
                 "成功率": "业务调用成功率相对 99% 目标的得分，健康权重 35%。",
-                "性能": "延迟评分 70% + 稳定性评分 30%，健康权重 50%。",
-                "成本": "单请求成本、千 Token 成本与成本趋势综合得分，健康权重 15%。",
+                "性能": "相对自身基线的响应速度评分 90% + 稳定性评分 10%，健康权重 50%。",
+                "成本": "相对自身基线的成本效率综合得分，健康权重 15%。",
             }
             for label, score in component_scores.items():
                 with st.container(border=True, key=f"health_score_{label}", gap="xsmall"):
@@ -1114,10 +1115,10 @@ def render_performance(operating: pd.DataFrame) -> None:
         total_tags = st.container(horizontal=True, gap="small")
         _score_level_badge(total_level, total_badge_color, target=total_tags)
         total_tags.badge(total_change, color=total_change_color)
-    component_weights = {"响应速度": "70%", "稳定性": "30%"}
+    component_weights = {"响应速度": "90%", "稳定性": "10%"}
     component_help = {
-        "响应速度": "由 P50、P95、P99 延迟按指标字典归一化后加权计算，占综合体验 70%。",
-        "稳定性": "由日内 P95 延迟波动和成功率波动计算，占综合体验 30%。",
+        "响应速度": "由 P50、P95、P99 相对模型自身前 7 日基线计算，正常基线为 80 分，占综合体验 90%。",
+        "稳定性": "由日内 P95 延迟波动和成功率波动计算，占综合体验 10%。",
     }
     for column, (title, score, explanation, score_column) in zip(conclusion_cols[1:], conclusions[1:]):
         level, color = _performance_score_level(score)
@@ -1140,7 +1141,7 @@ def render_performance(operating: pd.DataFrame) -> None:
             st.altair_chart(_score_bar(score), width="stretch", theme=None)
             st.caption(explanation)
             st.badge(change_text, color=change_color)
-    st.caption("综合体验由右侧两项计算：响应速度 × 70% + 稳定性 × 30%。")
+    st.caption("综合体验由右侧两项计算：响应速度 × 90% + 稳定性 × 10%。")
 
     attention_days = selected[
         selected["latency_score"].lt(40) | selected["stability_score"].lt(40)
@@ -1245,8 +1246,8 @@ def render_performance(operating: pd.DataFrame) -> None:
         ])
         st.markdown("**分数计算方式**")
         st.caption(
-            "响应速度评分由 P50、P95、P99 按指标字典的分段归一化和权重汇总；"
-            "综合体验评分 = 响应速度评分 × 70% + 稳定性评分 × 30%。"
+            "响应速度评分由 P50、P95、P99 相对模型自身前 7 日基线计算，等于基线约 80 分；"
+            "综合体验评分 = 响应速度评分 × 90% + 稳定性评分 × 10%。"
         )
         detail_cols = st.columns(2, gap="large")
         with detail_cols[0]:
@@ -1375,10 +1376,10 @@ def render_cost(operating: pd.DataFrame) -> None:
         total_tags = st.container(horizontal=True, gap="small")
         _score_level_badge(total_level, total_badge_color, target=total_tags)
         total_tags.badge(total_change, color=total_change_color)
-    component_weights = {"成本效率": "40%", "质量保障": "60%"}
+    component_weights = {"成本效率": "70%", "质量保障": "30%"}
     component_help = {
-        "成本效率": "综合单请求成本、千 Token 成本和相对历史基线趋势，占成本总评分 40%。",
-        "质量保障": "来自统一标准能力任务的质量评分，占成本总评分 60%。",
+        "成本效率": "综合单请求成本、千 Token 成本和单请求 Token 相对模型自身基线的变化，占成本总评分 70%。",
+        "质量保障": "来自统一标准能力任务的质量评分，占成本总评分 30%。",
     }
     for column, (title, score, explanation, score_column) in zip(conclusion_cols[1:], conclusions[1:]):
         level, color = _performance_score_level(score)
@@ -1401,7 +1402,7 @@ def render_cost(operating: pd.DataFrame) -> None:
             st.altair_chart(_score_bar(score), width="stretch", theme=None)
             st.caption(explanation)
             st.badge(change_text, color=change_color)
-    st.caption("成本总评分由右侧两项计算：质量保障 × 60% + 成本效率 × 40%。")
+    st.caption("成本总评分由右侧两项计算：成本效率 × 70% + 质量保障 × 30%。")
 
     attention_days = selected[
         selected["cost_efficiency_score"].lt(40) | selected["quality_score"].lt(40)
@@ -1497,7 +1498,7 @@ def render_cost(operating: pd.DataFrame) -> None:
             {"label": "历史基线倍数", "value": f"{latest['cost_trend_ratio']:.3f}×", "help": "当前单请求成本相对历史基线的倍数。"},
         ])
         st.markdown("**分数计算方式**")
-        st.caption("成本效率评分综合单请求成本、千 Token 成本和成本趋势；成本总评分 = 质量评分 × 60% + 成本效率评分 × 40%。")
+        st.caption("成本效率按模型自身前 7 日基线评分，等于基线约 80 分；成本总评分 = 成本效率评分 × 70% + 质量评分 × 30%。")
         detail_cols = st.columns(2, gap="large")
         with detail_cols[0]:
             st.markdown("**数据采样周期**")
@@ -2519,9 +2520,48 @@ def sidebar_filters(data: dict[str, pd.DataFrame]) -> tuple[str, list[str], pd.T
     start = pd.Timestamp(start_date)
     end = pd.Timestamp(end_date) + pd.Timedelta(days=1)
     st.sidebar.divider()
-    if st.sidebar.button("重新加载数据", icon=":material/refresh:", width="stretch"):
+    rebuild_notice = st.session_state.pop("demo_rebuild_notice", None)
+    if rebuild_notice:
+        st.sidebar.success(rebuild_notice, icon=":material/check_circle:")
+    action_reload, action_rebuild = st.sidebar.columns(2, gap="small")
+    if action_reload.button(
+        "重新加载",
+        icon=":material/refresh:",
+        width="stretch",
+        help="清除页面缓存并重新读取现有数据文件。",
+    ):
         st.cache_data.clear()
         st.rerun()
+    with action_rebuild.popover(
+        "重新生成",
+        icon=":material/autorenew:",
+        width="stretch",
+        help="重新生成90天模拟数据及其分析产物，包含业务起伏和短时异常。",
+    ):
+        st.caption("将覆盖模拟日志和衍生分析产物；newdata 与真实资源数据不会被修改。")
+        if st.button(
+            "确认重新生成",
+            type="primary",
+            width="stretch",
+            key="confirm_demo_rebuild",
+        ):
+            progress = st.progress(0, text="准备重新生成模拟数据…")
+
+            def update_rebuild_progress(index: int, total: int, label: str) -> None:
+                progress.progress(index / total, text=f"{label}（{index}/{total}）")
+
+            try:
+                seed = rebuild_demo_data(on_step=update_rebuild_progress)
+            except DemoRebuildError as exc:
+                st.error("重新生成失败，现有页面暂未重新加载。")
+                with st.expander("查看错误详情"):
+                    st.code(str(exc))
+            except OSError as exc:
+                st.error(f"当前部署环境无法写入模拟数据：{exc}")
+            else:
+                st.session_state.demo_rebuild_notice = f"模拟数据已重新生成（种子 {seed}）"
+                st.cache_data.clear()
+                st.rerun()
     st.sidebar.success("数据链路已就绪", icon=":material/check_circle:")
     policy_versions = data.get("risk_policy", pd.DataFrame()).get("version", pd.Series(dtype=str))
     policy_version = str(policy_versions.dropna().iloc[-1]) if not policy_versions.dropna().empty else "未知"

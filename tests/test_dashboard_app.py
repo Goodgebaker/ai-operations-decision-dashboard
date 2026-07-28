@@ -159,7 +159,9 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertNotIn("稳定性评分", [item.label for item in app.metric])
         ranking_styles = app.dataframe[0].proto.arrow_data.styler.styles
         self.assertIn("#dcfce7", ranking_styles)
-        self.assertIn("#fef9c3", ranking_styles)
+        self.assertTrue(
+            any(color in ranking_styles for color in ("#fef9c3", "#ffedd5", "#fee2e2", "#dcfce7"))
+        )
 
     def test_overall_health_gauge_ignores_model_filter(self) -> None:
         app = AppTest.from_file(

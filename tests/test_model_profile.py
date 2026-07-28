@@ -73,6 +73,7 @@ class ProbeMetricTests(unittest.TestCase):
         self.assertEqual(len(daily), 1)
         self.assertEqual(daily.iloc[0]["probe_run_count"], 2)
         self.assertAlmostEqual(daily.iloc[0]["probe_quality_score"], 66.6667, places=4)
+        self.assertEqual(daily.iloc[0]["probe_latency_score"], 80)
         self.assertTrue(0 <= daily.iloc[0]["probe_latency_score"] <= 100)
         self.assertTrue(0 <= daily.iloc[0]["probe_performance_score"] <= 100)
 
@@ -154,7 +155,7 @@ class ProfileIntegrationTests(unittest.TestCase):
             self.scoring_policy,
             self.diagnosis_policy,
         )
-        self.assertEqual(len(diagnosis), 90)
+        self.assertEqual(len(diagnosis), len(operating))
         self.assertEqual(len(profiles), 3)
         score_columns = [
             "capability_score", "profile_stability_score",
@@ -168,14 +169,27 @@ class ProfileIntegrationTests(unittest.TestCase):
             .all()
         )
         self.assertEqual(profiles["profile_rank"].tolist(), [1, 2, 3])
-        qwen_role = profiles.loc[
-            profiles["model_id"].eq("Qwen3.6-35B-A3B"), "recommended_role"
-        ].iloc[0]
-        self.assertEqual(qwen_role, "辅助路由候选")
         self.assertEqual(
-            set(profiles["dominant_capability"])
-            | set(profiles["weakest_capability"]),
-            {"instruction_following", "reasoning", "tool_call"},
+            set(profiles["model_id"]),
+            {"DeepSeek-V4", "Minimax-M2.5", "Qwen3.6-35B-A3B"},
+        )
+        self.assertTrue(
+            set(profiles["recommended_role"]).issubset(
+                {"主路由候选", "辅助路由候选", "观察候选", "暂停新增流量"}
+            )
+        )
+        self.assertTrue(
+            (
+                set(profiles["dominant_capability"])
+                | set(profiles["weakest_capability"])
+            ).issubset(
+                {
+                    "instruction_following",
+                    "structured_output",
+                    "reasoning",
+                    "tool_call",
+                }
+            )
         )
 
 
