@@ -176,7 +176,8 @@ python src/probe_scheduler.py
 
 `model_operations.py` 使用原始调用日志计算准确的日级 P50/P95/P99、成功率和
 成本指标，使用模型小时特征计算日内波动，再按 `Scoring Policy` 生成性能、
-稳定性、成本效率、成本性能和健康指数。响应速度和成本效率均相对各模型自身
+稳定性、成本效率、成本性能和健康指数。稳定性按日调用量使用1/3/6小时
+自适应统计桶，避免低流量模型被小时级小样本误伤；响应速度和成本效率均相对各模型自身
 前 7 个历史日中位数评分：等于基线约为 80 分，优于或弱于基线时连续升降；
 至少需要 3 个历史日，不足时使用 1.0 中性比值并显式标记 readiness 字段。
 
@@ -224,8 +225,8 @@ streamlit run dashboard/app.py
 - `outputs/probe_alerts.csv`：连续失败、关联故障与恢复事件。
 - `data/capability_probe_runs.csv`：标准任务 × 模型的对称能力校准明细。
 - `data/external_model_benchmarks.csv`：由外部真实压测汇总标准化得到的候选模型容量基准。
-- `data/resource_model_timeseries.csv`：脱敏后的真实模型两分钟资源与性能时序。
-- `data/resource_instance_hourly.csv`：不含原始 IP 的匿名实例小时 NPU 汇总。
+- `data/resource_model_timeseries.csv`：最新真实日及向前校准生成的 89 天模型两分钟资源与性能时序。
+- `data/resource_instance_hourly.csv`：最新真实日及模拟历史的不含原始 IP 的匿名实例小时 NPU 汇总。
 - `outputs/model_capability_scores.csv`：模型在四个能力维度上的质量、稳定性和性能统计。
 - `src/external_benchmarks.py`：外部压测标准化、质量校验和容量画像生成器。
 - `src/resource_capacity.py`：每日三表校验、模型级去重、实例脱敏和容量诊断。
@@ -239,7 +240,7 @@ streamlit run dashboard/app.py
 - `src/model_profile.py`：控制变量融合诊断、画像评分和路由角色建议。
 - `outputs/model_health_risks.csv`：模型日级性能、成功率、成本风险与融合风险评分。
 - `outputs/model_diagnostic_evidence.csv`：异常解释、原因、切换建议、替代模型和证据摘要。
-- `outputs/resource_capacity_daily.csv`：真实资源日级容量状态、余量和诊断结论。
+- `outputs/resource_capacity_daily.csv`：最新真实日与模拟历史组成的 90 天容量状态、余量和诊断结论。
 - `src/model_health_risk.py`：健康风险识别、单项保护、诊断解释和替代路由决策引擎。
 - `dashboard/app.py`：Streamlit 实验看板。
 

@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.model_operations import (
     DEFAULT_CONFIG,
+    _round_numeric,
     build_daily_operating_metrics,
     build_latest_snapshot,
     score_model_operations,
@@ -23,7 +24,7 @@ def sample_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
             ("model-slow", 2200, 1.3),
         ]:
             for hour in range(4):
-                timestamp = day + pd.Timedelta(hours=hour)
+                timestamp = day + pd.Timedelta(hours=hour * 6)
                 request_number += 1
                 log_rows.append(
                     {
@@ -49,6 +50,23 @@ def sample_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 class DailyOperatingMetricTests(unittest.TestCase):
+    def test_cost_per_request_keeps_six_decimal_precision(self) -> None:
+        metrics = _round_numeric(
+            pd.DataFrame(
+                {
+                    "cost_per_request": [0.0008124, 0.0008374],
+                    "cost_per_request_baseline": [0.0008014, 0.0008064],
+                    "performance_score": [76.23456, 77.34567],
+                }
+            )
+        )
+
+        self.assertEqual(
+            metrics["cost_per_request"].tolist(),
+            [0.000812, 0.000837],
+        )
+        self.assertEqual(metrics["performance_score"].tolist(), [76.2346, 77.3457])
+
     def test_raw_logs_drive_daily_percentiles_and_success_rate(self) -> None:
         logs, hourly = sample_inputs()
         daily = build_daily_operating_metrics(logs, hourly)
@@ -61,6 +79,8 @@ class DailyOperatingMetricTests(unittest.TestCase):
         self.assertEqual(first["p50_latency_ms"], 1150)
         self.assertEqual(first["p95_latency_ms"], 1285)
         self.assertGreater(first["latency_cv"], 0)
+        self.assertEqual(first["stability_bucket_hours"], 6)
+        self.assertEqual(first["stability_bucket_count"], 4)
 
     def test_cost_trend_uses_only_prior_days_and_marks_readiness(self) -> None:
         logs, hourly = sample_inputs()
@@ -91,6 +111,7 @@ class DailyOperatingMetricTests(unittest.TestCase):
         one_hour = hourly.iloc[[0]].copy()
         daily = build_daily_operating_metrics(one_log, one_hour)
         self.assertEqual(daily.iloc[0]["observed_hours"], 1)
+        self.assertEqual(daily.iloc[0]["stability_bucket_count"], 1)
         self.assertTrue(pd.isna(daily.iloc[0]["latency_cv"]))
         self.assertTrue(pd.isna(daily.iloc[0]["success_rate_std_pct"]))
 

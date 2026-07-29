@@ -420,12 +420,179 @@ def _round_numeric(frame: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def generate_synthetic_history(
+    model_series: pd.DataFrame,
+    instance_hourly: pd.DataFrame,
+    capacity_daily: pd.DataFrame,
+    *,
+    days: int = 90,
+    seed: int = 20260721,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """用最新真实资源日校准并向前生成历史，且不改写最新真实明细。"""
+
+    if days < 1:
+        raise ValueError("历史天数必须至少为 1")
+    if model_series.empty or instance_hourly.empty or capacity_daily.empty:
+        raise ValueError("生成资源历史前必须先有最新真实资源数据")
+
+    model = model_series.copy()
+    instances = instance_hourly.copy()
+    capacity = capacity_daily.copy()
+    model["timestamp"] = pd.to_datetime(model["timestamp"])
+    model["date"] = pd.to_datetime(model["date"])
+    model["source_date"] = pd.to_datetime(model["source_date"])
+    instances["hour"] = pd.to_datetime(instances["hour"])
+    instances["date"] = pd.to_datetime(instances["date"])
+    capacity["date"] = pd.to_datetime(capacity["date"])
+
+    latest_date = pd.Timestamp(capacity["date"].max()).normalize()
+    anchor_model = model[model["date"].dt.normalize().eq(latest_date)].copy()
+    anchor_instances = instances[instances["date"].dt.normalize().eq(latest_date)].copy()
+    anchor_capacity = capacity[capacity["date"].dt.normalize().eq(latest_date)].copy()
+    if anchor_model.empty or anchor_instances.empty or anchor_capacity.empty:
+        raise ValueError("最新日期缺少完整的模型、实例或容量数据")
+
+    rng = np.random.default_rng(seed)
+    instance_limits = anchor_capacity.set_index("model_id")["instance_count"].to_dict()
+    model_days = [anchor_model]
+    instance_days = [anchor_instances]
+    capacity_days = [anchor_capacity]
+
+    for offset in range(days - 1, 0, -1):
+        target_date = latest_date - pd.Timedelta(days=offset)
+        progress = (days - 1 - offset) / max(days - 1, 1)
+        weekly = 1 + 0.10 * np.sin(2 * np.pi * target_date.dayofweek / 7)
+        common_load = weekly * (0.88 + 0.10 * progress) * rng.lognormal(0, 0.07)
+        anomaly_day = rng.random() < 0.09
+
+        day_model_parts: list[pd.DataFrame] = []
+        day_instance_parts: list[pd.DataFrame] = []
+        day_capacity_parts: list[pd.DataFrame] = []
+        for model_id in sorted(anchor_capacity["model_id"].unique()):
+            model_factor = common_load * rng.lognormal(0, 0.08)
+            stress = rng.uniform(1.25, 1.75) if anomaly_day and rng.random() < 0.65 else 1.0
+
+            model_part = anchor_model[anchor_model["model_id"].eq(model_id)].copy()
+            model_part["timestamp"] = model_part["timestamp"] - pd.Timedelta(days=offset)
+            model_part["date"] = target_date
+            model_part["source_date"] = target_date
+            point_noise = rng.lognormal(0, 0.10, len(model_part))
+            limit = int(instance_limits[model_id])
+            model_part["running"] = np.clip(
+                np.rint(model_part["running"].fillna(0) * model_factor * stress * point_noise),
+                0,
+                limit,
+            )
+            # 普通日只允许极少量短时排队；压力异常日才显著提高出现概率。
+            queue_probability = 0.00003 + (0.004 if stress > 1 else 0)
+            queue_mask = rng.random(len(model_part)) < queue_probability
+            model_part["waiting"] = np.where(queue_mask, rng.integers(1, 4, len(model_part)), 0)
+            latency_factor = (0.92 + 0.16 * model_factor) * stress
+            model_part["ttft_ms"] = (
+                model_part["ttft_ms"] * latency_factor * rng.lognormal(0, 0.10, len(model_part))
+            )
+            model_part["tokens_per_second"] = np.clip(
+                model_part["tokens_per_second"]
+                * (1.04 - 0.12 * max(model_factor - 1, 0))
+                * rng.lognormal(0, 0.06, len(model_part)),
+                0,
+                None,
+            )
+            model_part["data_origin"] = "synthetic_history_calibrated"
+            day_model_parts.append(model_part)
+
+            instance_part = anchor_instances[anchor_instances["model_id"].eq(model_id)].copy()
+            instance_part["hour"] = instance_part["hour"] - pd.Timedelta(days=offset)
+            instance_part["date"] = target_date
+            npu_factor = model_factor * stress
+            for column in ("npu_mean", "npu_p95", "npu_max"):
+                instance_part[column] = np.clip(
+                    instance_part[column] * npu_factor
+                    + rng.normal(0, 2.5, len(instance_part)),
+                    0,
+                    100,
+                )
+            instance_part["high_npu_samples"] = np.where(
+                instance_part["npu_max"].ge(70),
+                rng.integers(1, 5, len(instance_part)),
+                0,
+            )
+            instance_part["data_origin"] = "synthetic_history_calibrated"
+            instance_part = _round_numeric(instance_part)
+            day_instance_parts.append(instance_part)
+
+            capacity_part = anchor_capacity[anchor_capacity["model_id"].eq(model_id)].copy()
+            capacity_part["date"] = target_date
+            capacity_part["running_mean"] = float(model_part["running"].mean())
+            capacity_part["running_max_busy"] = int(model_part["running"].max())
+            capacity_part["waiting_max_busy"] = int(model_part["waiting"].max())
+            capacity_part["concurrency_ratio"] = (
+                capacity_part["running_max_busy"] / capacity_part["instance_count"]
+            )
+            capacity_part["ttft_mean_ms"] = float(model_part["ttft_ms"].mean())
+            capacity_part["ttft_p95_ms"] = float(model_part["ttft_ms"].quantile(0.95))
+            capacity_part["tokens_per_second_mean"] = float(model_part["tokens_per_second"].mean())
+            capacity_part["npu_mean"] = float(instance_part["npu_mean"].mean())
+            capacity_part["npu_p95"] = float(instance_part["npu_p95"].max())
+            capacity_part["npu_max"] = float(instance_part["npu_max"].max())
+            capacity_part["high_npu_samples"] = int(instance_part["high_npu_samples"].sum())
+            capacity_part["npu_busy_pct"] = np.clip(
+                capacity_part["npu_busy_pct"] * npu_factor + rng.normal(0, 2), 0, 100
+            )
+            capacity_part["npu_peak_average_mean"] = np.clip(
+                capacity_part["npu_peak_average_mean"] * npu_factor + rng.normal(0, 2), 0, 100
+            )
+            capacity_part["cache_pct"] = np.clip(
+                capacity_part["cache_pct"] + rng.normal(0, 3), 0, 100
+            )
+            capacity_part["hbm_pct"] = np.clip(
+                capacity_part["hbm_pct"] + rng.normal(-1.2 + progress, 1.8), 65, 99
+            )
+            capacity_part["hbm_headroom_pct"] = 100 - capacity_part["hbm_pct"]
+            capacity_part["data_origin"] = "synthetic_history_calibrated"
+            capacity_part["capacity_state"] = capacity_part.apply(_capacity_state, axis=1)
+            capacity_part["diagnosis"] = capacity_part.apply(_capacity_diagnosis, axis=1)
+            day_capacity_parts.append(_round_numeric(capacity_part))
+
+        model_days.append(pd.concat(day_model_parts, ignore_index=True))
+        instance_days.append(pd.concat(day_instance_parts, ignore_index=True))
+        capacity_days.append(pd.concat(day_capacity_parts, ignore_index=True))
+
+    model_history = pd.concat(model_days, ignore_index=True).sort_values(["timestamp", "model_id"])
+    instance_history = pd.concat(instance_days, ignore_index=True).sort_values(
+        ["hour", "model_id", "instance_id"]
+    )
+    capacity_history = pd.concat(capacity_days, ignore_index=True).sort_values(["date", "model_id"])
+    capacity_history["observed_days"] = capacity_history.groupby("model_id")["date"].transform("nunique")
+    capacity_history["baseline_ready"] = capacity_history["observed_days"].ge(7)
+    return model_history, instance_history, capacity_history
+
+
+def write_synthetic_history(*, days: int = 90, seed: int = 20260721) -> None:
+    model = _read_existing(DEFAULT_MODEL_OUTPUT, ["timestamp", "date", "source_date"])
+    instances = _read_existing(DEFAULT_INSTANCE_OUTPUT, ["hour", "date"])
+    capacity = _read_existing(DEFAULT_CAPACITY_OUTPUT, ["date"])
+    model, instances, capacity = generate_synthetic_history(
+        model, instances, capacity, days=days, seed=seed
+    )
+    _atomic_csv(model, DEFAULT_MODEL_OUTPUT, ["timestamp", "model_id"])
+    _atomic_csv(instances, DEFAULT_INSTANCE_OUTPUT, ["hour", "model_id", "instance_id"])
+    _atomic_csv(capacity, DEFAULT_CAPACITY_OUTPUT, ["date", "model_id"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="导入每日真实资源工作簿并生成脱敏看板数据")
     parser.add_argument("--source-dir", type=Path, default=DEFAULT_INBOX)
     parser.add_argument("--archive-dir", type=Path, default=DEFAULT_ARCHIVE)
     parser.add_argument("--no-archive", action="store_true")
+    parser.add_argument("--generate-history", action="store_true")
+    parser.add_argument("--history-days", type=int, default=90)
+    parser.add_argument("--seed", type=int, default=20260721)
     args = parser.parse_args()
+    if args.generate_history:
+        write_synthetic_history(days=args.history_days, seed=args.seed)
+        print(f"已生成 {args.history_days} 天容量历史，最新真实资源日保持不变。")
+        return
     audits = import_batches(args.source_dir, args.archive_dir, not args.no_archive)
     for audit in audits:
         print(

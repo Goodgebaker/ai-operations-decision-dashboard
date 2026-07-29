@@ -195,6 +195,8 @@ python -m streamlit run dashboard/app.py
 - “Cost Performance Score”在页面上统一显示为“成本性能评分”。
 - v0.12.0 起响应速度和成本效率相对各模型自身前 7 日基线评分，正常基线约为
   80 分；成本性能评分由成本效率 70% 和质量保障 30% 组成。
+- v0.13.0 起稳定性根据日调用量采用1/3/6小时自适应统计桶：日调用量不少于
+  240使用1小时，不少于80使用3小时，其余使用6小时；少于2个有效桶时不评分。
 
 ## 7. 关键代码与数据
 
@@ -235,6 +237,8 @@ python -m streamlit run dashboard/app.py
 - `data/resource_model_timeseries.csv`
 - `data/resource_instance_hourly.csv`
 - `outputs/resource_capacity_daily.csv`
+
+容量文件保留最新真实资源日，并向前生成 89 天带来源标记的校准模拟历史；模拟历史只用于趋势与基线演示，不应作为生产容量证据。
 
 当前看板依赖这些预计算文件，因此迁移时必须保留 `data/`、`outputs/` 和指标字典。
 

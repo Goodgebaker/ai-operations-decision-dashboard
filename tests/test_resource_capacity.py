@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.resource_capacity import discover_batches, process_batch
+from src.resource_capacity import discover_batches, generate_synthetic_history, process_batch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +38,27 @@ class ResourceCapacityImportTests(unittest.TestCase):
             (root / "模型性能中间明细_20260721.xlsx").touch()
             with self.assertRaisesRegex(ValueError, "批次不完整"):
                 discover_batches(root)
+
+    def test_synthetic_history_keeps_latest_observed_day(self) -> None:
+        batch = discover_batches(PROJECT_ROOT / "newdata")[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            model, instances, capacity, _ = process_batch(
+                batch, Path(temporary) / ".instance_salt"
+            )
+        model_history, instance_history, capacity_history = generate_synthetic_history(
+            model, instances, capacity, days=7, seed=42
+        )
+
+        self.assertEqual(pd.to_datetime(model_history["date"]).dt.normalize().nunique(), 7)
+        self.assertEqual(pd.to_datetime(instance_history["date"]).dt.normalize().nunique(), 7)
+        self.assertEqual(pd.to_datetime(capacity_history["date"]).dt.normalize().nunique(), 7)
+        latest = pd.Timestamp(capacity["date"].max()).normalize()
+        latest_capacity = capacity_history[
+            pd.to_datetime(capacity_history["date"]).dt.normalize().eq(latest)
+        ]
+        self.assertTrue(latest_capacity["data_origin"].eq("observed").all())
+        self.assertTrue(capacity_history["baseline_ready"].all())
+        self.assertGreater(model_history["running"].nunique(), model["running"].nunique())
 
 
 if __name__ == "__main__":

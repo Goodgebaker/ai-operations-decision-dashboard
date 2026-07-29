@@ -20,6 +20,21 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+_CAPACITY_DETAIL_SCROLL = st.components.v2.component(
+    "capacity_detail_scroll",
+    html="""<span aria-hidden="true" style="display:block;height:1px"></span>""",
+    js="""
+export default function ({ data, parentElement }) {
+  if (!data?.enabled) return
+  const root = parentElement.getRootNode()
+  const target = root?.host ?? parentElement
+  requestAnimationFrame(() => {
+    setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "start" }), 80)
+  })
+}
+""",
+)
+
 from src.external_benchmarks import build_capacity_profiles
 from src.demo_rebuild import DemoRebuildError, rebuild_demo_data
 from src.interactive_risk_policy import (
@@ -299,6 +314,89 @@ def _capacity_state_badge(label: str, color: str) -> None:
     )
 
 
+def _capacity_plain_state(state: str) -> tuple[str, str, str]:
+    """把后端容量状态映射为面向业务用户的名称、颜色和图标。"""
+    return {
+        "容量风险": ("高峰期可能处理不过来", "red", ":material/warning:"),
+        "需要关注": ("接近容量上限", "orange", ":material/error:"),
+        "容量充足": ("容量充足", "green", ":material/check_circle:"),
+    }.get(str(state), ("状态待确认", "gray", ":material/help:"))
+
+
+def _capacity_plain_reason(row: pd.Series) -> str:
+    reasons: list[str] = []
+    headroom = float(row["hbm_headroom_pct"])
+    npu_peak = float(row["npu_max"])
+    concurrency = int(row["running_max_busy"])
+    instances = max(int(row["instance_count"]), 1)
+    waiting = int(row["waiting_max_busy"])
+    if waiting > 0:
+        reasons.append(f"高峰时最多有 {waiting} 个请求等待处理")
+    if headroom <= 5:
+        reasons.append(f"显存最低只剩 {headroom:.1f}%")
+    elif headroom <= 10:
+        reasons.append(f"显存余量仅剩 {headroom:.1f}%")
+    if npu_peak >= 95:
+        reasons.append("算力曾达到满载")
+    elif npu_peak >= 70:
+        reasons.append(f"算力峰值达到 {npu_peak:.0f}%")
+    if concurrency / instances >= 0.8:
+        reasons.append(f"高峰时同时处理 {concurrency} 个请求，已接近 {instances} 个实例的承载上限")
+    if not reasons:
+        reasons.append("当前算力、显存和并发均留有余量")
+    return "；".join(reasons[:3]) + "。"
+
+
+def _capacity_plain_impact(row: pd.Series) -> str:
+    if int(row["waiting_max_busy"]) > 0:
+        return "已经出现请求排队，用户可能感到响应变慢。"
+    if str(row["capacity_state"]) == "容量风险":
+        return "继续增加流量后，可能出现响应变慢或请求排队。"
+    if str(row["capacity_state"]) == "需要关注":
+        return "流量明显增加时，响应速度可能下降。"
+    return "当前预计不会影响请求处理。"
+
+
+def _capacity_current_impact(row: pd.Series) -> str:
+    waiting = int(row["waiting_max_busy"])
+    return f"已发现最多 {waiting} 个请求排队" if waiting else "暂未发现请求排队"
+
+
+def _capacity_key_signal(row: pd.Series) -> str:
+    """处理清单只展示一个最值得关注的容量信号。"""
+    if int(row["waiting_max_busy"]) > 0:
+        return f"已出现 {int(row['waiting_max_busy'])} 个高峰等待请求"
+    if float(row["hbm_headroom_pct"]) <= 10:
+        return f"显存余量仅剩 {float(row['hbm_headroom_pct']):.1f}%"
+    if float(row["concurrency_ratio"]) >= 0.8:
+        return f"忙时并发已达到 {float(row['concurrency_ratio']) * 100:.0f}% 的实例比例"
+    if float(row["npu_max"]) >= 70:
+        return f"算力峰值达到 {float(row['npu_max']):.0f}%"
+    return "当前主要容量指标均留有余量"
+
+
+def _capacity_plain_action(row: pd.Series) -> str:
+    waiting = int(row["waiting_max_busy"])
+    headroom = float(row["hbm_headroom_pct"])
+    if waiting > 0:
+        return "先分流新增请求，并检查是否需要增加实例。"
+    if str(row["capacity_state"]) == "容量风险" and headroom <= 5:
+        return "优先检查实例配置和流量分配，确认是否需要释放显存、增加实例或降低路由权重。"
+    if str(row["capacity_state"]) == "容量风险":
+        return "检查高峰负载和实例配置，必要时增加实例或迁移部分流量。"
+    if str(row["capacity_state"]) == "需要关注":
+        return "保持当前实例规模，重点观察高峰变化，暂缓一次性增加大量流量。"
+    return "维持当前配置，并继续进行日常观察。"
+
+
+def _select_capacity_model(model_id: str) -> None:
+    st.session_state["capacity_detail_model"] = model_id
+    st.session_state["capacity_scroll_to_detail"] = True
+    st.session_state["capacity_scroll_request"] = (
+        st.session_state.get("capacity_scroll_request", 0) + 1
+    )
+
+
 def _score_level_badge(label: str, color: str, target=None, icon: str | None = None) -> None:
     """评分低档徽章固定使用深红色，绕开 Streamlit 对 red 的主题派生。"""
     renderer = st if target is None else target
@@ -389,6 +487,22 @@ def _weighted_cost_summary(frame: pd.DataFrame) -> dict[str, float]:
         weights = valid["request_count"].clip(lower=1)
         summary[column] = float(np.average(valid[column], weights=weights))
     return summary
+
+
+def _peer_window_average(
+    frame: pd.DataFrame,
+    excluded_model: str,
+    score_column: str,
+    summary_builder,
+) -> float:
+    """使用相同窗口和汇总口径计算其他模型的等权平均分。"""
+    peer_scores = [
+        summary_builder(model_frame).get(score_column, np.nan)
+        for model_id, model_frame in frame.groupby("model_id")
+        if model_id != excluded_model
+    ]
+    valid_scores = [float(score) for score in peer_scores if not pd.isna(score)]
+    return float(np.mean(valid_scores)) if valid_scores else np.nan
 
 
 def _score_change_text(
@@ -1062,9 +1176,12 @@ def render_performance(operating: pd.DataFrame) -> None:
     current_summary = _weighted_performance_summary(selected)
     previous_summary = _weighted_performance_summary(previous)
     peer_window = operating[operating["date"].between(window_start, latest_date)]
-    peer_latest = _latest_by_model(peer_window)
-    peer_scores = peer_latest.loc[peer_latest["model_id"].ne(model), "latency_score"]
-    peer_average = float(peer_scores.mean()) if not peer_scores.empty else np.nan
+    peer_average = _peer_window_average(
+        peer_window,
+        model,
+        "latency_score",
+        _weighted_performance_summary,
+    )
     observed_days = int(selected["date"].nunique())
 
     stability_level, _ = _performance_score_level(current_summary["stability_score"])
@@ -1118,7 +1235,7 @@ def render_performance(operating: pd.DataFrame) -> None:
     component_weights = {"响应速度": "90%", "稳定性": "10%"}
     component_help = {
         "响应速度": "由 P50、P95、P99 相对模型自身前 7 日基线计算，正常基线为 80 分，占综合体验 90%。",
-        "稳定性": "由日内 P95 延迟波动和成功率波动计算，占综合体验 10%。",
+        "稳定性": "由日内 P95 延迟波动和成功率波动计算；低流量模型自动扩大到3或6小时统计桶，占综合体验10%。",
     }
     for column, (title, score, explanation, score_column) in zip(conclusion_cols[1:], conclusions[1:]):
         level, color = _performance_score_level(score)
@@ -1252,7 +1369,7 @@ def render_performance(operating: pd.DataFrame) -> None:
         detail_cols = st.columns(2, gap="large")
         with detail_cols[0]:
             st.markdown("**数据采样周期**")
-            st.caption("请求级数据按日汇总；稳定性基于日内小时级 P95 波动与成功率波动计算。")
+            st.caption("请求级数据按日汇总；稳定性按日调用量采用1/3/6小时统计桶计算P95与成功率波动，降低低样本随机偏差。")
             st.markdown("**基线来源**")
             st.caption("模型名称与 TTFT 基线来自真实资源观测；请求延迟历史为基线校准后的模拟数据。")
         with detail_cols[1]:
@@ -1334,9 +1451,12 @@ def render_cost(operating: pd.DataFrame) -> None:
     current_summary = _weighted_cost_summary(selected)
     previous_summary = _weighted_cost_summary(previous)
     peer_window = operating[operating["date"].between(window_start, latest_date)]
-    peer_latest = _latest_by_model(peer_window)
-    peer_scores = peer_latest.loc[peer_latest["model_id"].ne(model), "cost_efficiency_score"]
-    peer_average = float(peer_scores.mean()) if not peer_scores.empty else np.nan
+    peer_average = _peer_window_average(
+        peer_window,
+        model,
+        "cost_efficiency_score",
+        _weighted_cost_summary,
+    )
     weakest_label = (
         "成本效率"
         if current_summary["cost_efficiency_score"] <= current_summary["quality_score"]
@@ -1421,6 +1541,7 @@ def render_cost(operating: pd.DataFrame) -> None:
         operating["model_id"].isin(chart_models)
         & operating["date"].between(window_start, latest_date)
     ].copy()
+    chart_source["cost_per_1k_requests"] = chart_source["cost_per_request"] * 1000
 
     left, right = st.columns([1.35, 1], gap="large")
     with left:
@@ -1428,10 +1549,10 @@ def render_cost(operating: pd.DataFrame) -> None:
         chart = _line_chart(
             chart_source,
             "date",
-            "cost_per_request",
+            "cost_per_1k_requests",
             "model_id",
-            "成本 / 请求",
-            [alt.Tooltip("date:T", title="日期", format="%Y-%m-%d"), alt.Tooltip("model_id:N", title="模型"), alt.Tooltip("cost_per_request:Q", title="单请求成本", format=".6f"), alt.Tooltip("cost_trend_ratio:Q", title="基线倍数", format=".3f")],
+            "成本（元 / 千次请求）",
+            [alt.Tooltip("date:T", title="日期", format="%Y-%m-%d"), alt.Tooltip("model_id:N", title="模型"), alt.Tooltip("cost_per_1k_requests:Q", title="千次请求成本（元）", format=".3f"), alt.Tooltip("cost_per_request:Q", title="单请求成本（元）", format=".6f"), alt.Tooltip("cost_trend_ratio:Q", title="基线倍数", format=".3f")],
         )
         st.altair_chart(chart, width="stretch")
     with right:
@@ -1683,7 +1804,8 @@ def render_calibration(
         hide_index=True,
         height=250,
     )
-    with st.expander("查看完整模型画像"):
+    full_capability_data = st.expander("查看完整能力数据")
+    with full_capability_data.expander("查看完整模型画像"):
         st.dataframe(
             profiles.sort_values("profile_rank"),
             column_order=["profile_rank", "model_id", "capability_score", "profile_stability_score", "profile_performance_score", "confidence_score", "routing_readiness_score", "dominant_capability", "weakest_capability", "recommended_role", "routing_action"],
@@ -1707,7 +1829,7 @@ def render_calibration(
         diagnosis_summary = model_diagnosis.head(7).copy()
         diagnosis_summary["表现差异"] = diagnosis_summary["performance_gap_score"].map(_performance_gap_label)
 
-        with st.expander("查看原始诊断证据与完整数据"):
+        with full_capability_data.expander("查看原始诊断证据与完整数据"):
             st.caption("以下字段用于复核诊断计算，默认折叠以避免干扰路由决策。")
             st.dataframe(
                 model_diagnosis,
@@ -1738,7 +1860,7 @@ def render_calibration(
                 icon=":material/download:",
             )
 
-    with st.expander("查看主动可用性检查（技术详情与导出）"):
+    with full_capability_data.expander("查看主动可用性检查（技术详情与导出）"):
         if probe_runs.empty:
             st.info("当前范围没有主动可用性检查记录。")
         else:
@@ -1760,7 +1882,7 @@ def render_calibration(
             c2.download_button("下载异常记录 CSV", probe_events.to_csv(index=False).encode("utf-8-sig"), "probe_alerts.csv", "text/csv", icon=":material/download:")
 
     if not model_diagnosis.empty:
-        with st.expander("查看近 7 次诊断轨迹"):
+        with full_capability_data.expander("查看近 7 次诊断轨迹"):
             st.caption("按日期回看真实使用表现、系统主动检查结果和当时的路由判断。")
             st.dataframe(
                 diagnosis_summary,
@@ -1778,7 +1900,7 @@ def render_calibration(
             )
 
 
-def render_resource_capacity(
+def _render_resource_capacity_legacy(
     model_series: pd.DataFrame,
     instance_hourly: pd.DataFrame,
     capacity: pd.DataFrame,
@@ -1788,7 +1910,7 @@ def render_resource_capacity(
         "判断当前资源是否足以承接流量，并给出扩容、迁移或继续观察的建议。",
     )
     with st.expander("数据说明", icon=":material/info:"):
-        st.caption("数据来自每日真实资源工作簿；实例标识已经匿名化，中台模型不在监控范围内。当前没有独立的容量评分规则，因此本页直接展示真实风险状态和判断依据。")
+        st.caption("最新一天来自真实资源工作簿；此前 89 天是依据真实日内曲线校准生成的模拟历史，仅用于趋势和基线演示。实例标识已经匿名化，中台模型不在监控范围内。当前没有独立的容量评分规则，因此本页直接展示风险状态和判断依据。")
     if model_series.empty or instance_hourly.empty or capacity.empty:
         st.info("尚未导入完整的真实资源数据。请把每日三份 Excel 放入指定目录后运行“更新每日数据.bat”。")
         return
@@ -1856,9 +1978,21 @@ def render_resource_capacity(
             icon=":material/calendar_clock:",
         )
 
+    trend_title_col, trend_window_col = st.columns([1, 1], vertical_alignment="center")
+    trend_title_col.markdown("#### 容量趋势")
+    capacity_window = trend_window_col.container(horizontal_alignment="right").segmented_control(
+        "时间范围",
+        ["过去 7 天", "过去 30 天", "过去 90 天"],
+        default="过去 30 天",
+        required=True,
+        key="capacity_window",
+        label_visibility="collapsed",
+        width="content",
+    )
+    capacity_days = {"过去 7 天": 7, "过去 30 天": 30, "过去 90 天": 90}[str(capacity_window)]
+    capacity_window_start = latest_date - pd.Timedelta(days=capacity_days - 1)
     trend_col, diagnosis_col = st.columns([1.35, 1], gap="large", vertical_alignment="top")
     with trend_col:
-        st.markdown("#### 容量趋势")
         metric_label = st.segmented_control(
             "资源趋势指标",
             ["运行并发", "等待队列", "首字延迟", "服务吞吐"],
@@ -1873,7 +2007,11 @@ def render_resource_capacity(
         "服务吞吐": ("tokens_per_second", "每秒输出 Token", "表示服务输出速度；需结合并发和等待一起判断容量。"),
     }
     metric_column, axis_title, metric_help = metric_specs[str(metric_label)]
-    chart_data = model_series.dropna(subset=[metric_column]).copy()
+    chart_data = model_series[
+        pd.to_datetime(model_series["timestamp"]).between(
+            capacity_window_start, latest_date + pd.Timedelta(days=1)
+        )
+    ].dropna(subset=[metric_column]).copy()
     with trend_col:
         if chart_data.empty:
             st.info("当前指标没有可用趋势数据。")
@@ -1998,6 +2136,394 @@ def render_resource_capacity(
         st.download_button(
             "下载容量诊断原始数据",
             latest.to_csv(index=False).encode("utf-8-sig"),
+            f"capacity_diagnosis_{latest_date:%Y%m%d}.csv",
+            "text/csv",
+            icon=":material/download:",
+        )
+
+
+def render_resource_capacity(
+    model_series: pd.DataFrame,
+    instance_hourly: pd.DataFrame,
+    capacity: pd.DataFrame,
+) -> None:
+    _section(
+        "容量诊断",
+        "快速判断是否存在容量风险、哪个模型需要优先处理，以及下一步应采取什么行动。",
+    )
+    if model_series.empty or instance_hourly.empty or capacity.empty:
+        st.info(
+            "尚未导入完整的资源数据。请把每日三份 Excel 放入指定目录后运行“更新每日数据.bat”。",
+            icon=":material/database_off:",
+        )
+        return
+
+    latest_date = pd.Timestamp(capacity["date"].max()).normalize()
+    latest = capacity[pd.to_datetime(capacity["date"]).dt.normalize().eq(latest_date)].copy()
+    risk_priority = {"容量风险": 0, "需要关注": 1, "容量充足": 2}
+    latest["_priority"] = latest["capacity_state"].map(risk_priority).fillna(3)
+    latest = latest.sort_values(["_priority", "hbm_headroom_pct", "npu_max"], ascending=[True, True, False])
+    primary = latest.iloc[0]
+    risk_count = int(latest["capacity_state"].eq("容量风险").sum())
+    attention_count = int(latest["capacity_state"].eq("需要关注").sum())
+    affected_requests = int(latest["waiting_max_busy"].clip(lower=0).sum())
+
+    header_context, header_window = st.columns([1.2, 1], vertical_alignment="center")
+    header_context.caption(
+        f"当前资源池 · {latest['model_id'].nunique()} 个模型 · "
+        f"{int(latest['instance_count'].sum())} 个实例 · 数据日期 {latest_date:%Y-%m-%d}"
+    )
+    capacity_window = header_window.container(horizontal_alignment="right").segmented_control(
+        "趋势时间范围",
+        ["过去 7 天", "过去 30 天", "过去 90 天"],
+        default="过去 30 天",
+        required=True,
+        key="capacity_window_decision",
+        width="content",
+    )
+    capacity_days = {"过去 7 天": 7, "过去 30 天": 30, "过去 90 天": 90}[str(capacity_window)]
+    capacity_window_start = latest_date - pd.Timedelta(days=capacity_days - 1)
+
+    with st.expander("数据说明", icon=":material/info:"):
+        st.caption(
+            "最新一天来自真实资源工作簿；此前 89 天是依据真实日内曲线校准生成的模拟历史，"
+            "只用于趋势和基线演示。页面保留原始容量判断逻辑，并将技术结论翻译为通俗说明。"
+        )
+
+    primary_state, primary_color, primary_icon = _capacity_plain_state(str(primary["capacity_state"]))
+    if risk_count:
+        overview_title = f"当前有 {risk_count} 个模型存在高峰容量风险"
+    elif attention_count:
+        overview_title = f"当前有 {attention_count} 个模型接近容量上限"
+    else:
+        overview_title = "当前模型容量充足"
+    impact_summary = (
+        f"已发现 {affected_requests} 个高峰等待请求"
+        if affected_requests
+        else "尚未发现请求排队，当前没有明确影响线上请求"
+    )
+
+    with st.container(border=True, key="capacity_risk_overview"):
+        overview_main, overview_metrics = st.columns([1.65, 1], gap="large", vertical_alignment="center")
+        with overview_main:
+            st.caption("风险总览")
+            st.markdown(f"## {primary_icon} {overview_title}")
+            st.markdown(
+                f"**{primary['model_id']}** 最需要优先处理。"
+                f"{_capacity_plain_reason(primary)}{_capacity_plain_impact(primary)}"
+            )
+            st.markdown(f"**当前业务影响：** {impact_summary}")
+            st.markdown(f"**建议操作：** {_capacity_plain_action(primary)}")
+            overview_focus = st.segmented_control(
+                "风险详情",
+                ["处理建议", "高负载实例"],
+                default="处理建议",
+                required=True,
+                key="capacity_overview_focus",
+                help="选择后，下方会显示对应内容；蓝色选项表示当前正在查看的内容。",
+            )
+            if overview_focus == "处理建议":
+                st.info(
+                    f"{primary['model_id']}：{_capacity_plain_action(primary)}",
+                    icon=":material/recommend:",
+                )
+            else:
+                st.caption(
+                    "这里列出最新资源日中出现高负载的匿名实例。高负载表示算力峰值达到 70% 以上，"
+                    "用于定位需要技术人员进一步检查的实例。"
+                )
+                primary_instances = instance_hourly[
+                    instance_hourly["model_id"].eq(primary["model_id"])
+                    & pd.to_datetime(instance_hourly["date"]).dt.normalize().eq(latest_date)
+                ]
+                high_load_instances = (
+                    primary_instances.groupby("instance_id", as_index=False)
+                    .agg(
+                        npu_max=("npu_max", "max"),
+                        npu_mean=("npu_mean", "mean"),
+                        high_npu_samples=("high_npu_samples", "sum"),
+                    )
+                    .query("npu_max >= 70 or high_npu_samples > 0")
+                    .sort_values(["npu_max", "high_npu_samples"], ascending=False)
+                )
+                if high_load_instances.empty:
+                    st.success("最新资源日没有发现高负载实例。", icon=":material/check_circle:")
+                else:
+                    st.dataframe(
+                        high_load_instances,
+                        column_order=["instance_id", "npu_max", "npu_mean", "high_npu_samples"],
+                        column_config={
+                            "instance_id": "匿名实例",
+                            "npu_max": st.column_config.NumberColumn("算力峰值", format="%.0f%%"),
+                            "npu_mean": st.column_config.NumberColumn("平均算力", format="%.1f%%"),
+                            "high_npu_samples": "高负载记录数",
+                        },
+                        hide_index=True,
+                        height=155,
+                    )
+        with overview_metrics:
+            risk_models = latest.loc[latest["capacity_state"].eq("容量风险"), "model_id"].astype(str).tolist()
+            attention_models = latest.loc[latest["capacity_state"].eq("需要关注"), "model_id"].astype(str).tolist()
+            affected_models = latest.loc[latest["waiting_max_busy"].gt(0), "model_id"].astype(str).tolist()
+            metric_specs = [
+                (
+                    "高风险模型",
+                    risk_count,
+                    risk_models,
+                    "高峰期可能处理不过来，需要优先采取行动的模型数量。",
+                ),
+                (
+                    "接近容量上限",
+                    attention_count,
+                    attention_models,
+                    "目前还能工作，但继续增加流量可能出现压力的模型数量。",
+                ),
+                (
+                    "当前受影响请求",
+                    affected_requests,
+                    affected_models,
+                    "最新资源日中，各模型高峰等待队列最大值的合计。0 表示尚未发现排队。",
+                ),
+            ]
+            metric_columns = st.columns(3, gap="small", vertical_alignment="top")
+            for metric_column, (label, value, models, help_text) in zip(
+                metric_columns, metric_specs, strict=True
+            ):
+                with metric_column.container(
+                    border=True,
+                    height=220,
+                    vertical_alignment="distribute",
+                    key=f"capacity_summary_{label}",
+                ):
+                    with st.container(gap=None):
+                        st.metric(label, value, help=help_text)
+                    with st.container(gap=None):
+                        st.caption(f"涉及：{'、'.join(models) if models else '暂无'}")
+
+    st.markdown("### 模型处理清单")
+    st.caption("已按风险优先级排序；清单只保留关键状态，完整影响与建议在下方查看。")
+    for _, row in latest.iterrows():
+        state_label, state_color, state_icon = _capacity_plain_state(str(row["capacity_state"]))
+        with st.container(border=True, key=f"capacity_action_item_{row['model_id']}"):
+            identity, status, signal, action = st.columns(
+                [1.35, 1.45, 2.1, 1.25],
+                gap="medium",
+                vertical_alignment="center",
+            )
+            with identity:
+                st.markdown(f"**{row['model_id']}**")
+                st.caption(f"{int(row['instance_count'])} 个实例")
+            with status:
+                _capacity_state_badge(state_label, state_color)
+            with signal:
+                st.caption("关键状态")
+                st.write(_capacity_key_signal(row))
+            with action:
+                st.button(
+                    "查看处理建议",
+                    icon=":material/link:",
+                    key=f"capacity_select_{row['model_id']}",
+                    on_click=_select_capacity_model,
+                    args=(str(row["model_id"]),),
+                    width="stretch",
+                )
+
+    model_options = latest["model_id"].astype(str).tolist()
+    if st.session_state.get("capacity_detail_model") not in model_options:
+        st.session_state["capacity_detail_model"] = str(primary["model_id"])
+    if st.session_state.pop("capacity_scroll_to_detail", False):
+        _CAPACITY_DETAIL_SCROLL(
+            data={"enabled": True},
+            key=f"capacity-scroll-{st.session_state.get('capacity_scroll_request', 0)}",
+            height=1,
+            width="stretch",
+        )
+    detail_heading, detail_selector = st.columns([1.2, 1], vertical_alignment="bottom")
+    detail_heading.markdown("### 选中模型详情")
+    selected_model = detail_selector.selectbox(
+        "查看模型",
+        model_options,
+        key="capacity_detail_model",
+        help="可从处理清单点击模型，也可以在这里直接切换。",
+    )
+    selected = latest[latest["model_id"].eq(selected_model)].iloc[0]
+    selected_state, selected_color, selected_icon = _capacity_plain_state(str(selected["capacity_state"]))
+
+    with st.container(border=True, key="capacity_selected_summary"):
+        summary_left, summary_right = st.columns([1.35, 1], gap="large", vertical_alignment="top")
+        with summary_left:
+            st.caption("当前发生了什么")
+            st.markdown(f"## {selected_icon} {selected_model}")
+            _capacity_state_badge(selected_state, selected_color)
+            st.write(_capacity_plain_reason(selected))
+            st.markdown(f"**可能造成的影响：** {_capacity_plain_impact(selected)}")
+            st.markdown(f"**是否已经影响线上用户：** {_capacity_current_impact(selected)}")
+        with summary_right:
+            st.caption("建议如何处理")
+            st.markdown(f"### {_capacity_plain_action(selected)}")
+            st.write("处理后重点观察等待队列是否持续为 0、显存余量是否回升，以及高峰响应时间是否改善。")
+            st.caption("下方四项指标直接展示本次判断所依据的容量信号。")
+
+        indicator_columns = st.columns(4, gap="medium")
+        indicator_specs = [
+            (
+                "NPU 峰值",
+                f"{selected['npu_max']:.0f}%",
+                "表示算力在最忙时使用了多少。",
+                "算力曾经完全占满" if selected["npu_max"] >= 95 else f"算力最高使用到 {selected['npu_max']:.0f}%",
+                "已满载" if selected["npu_max"] >= 95 else "仍有算力余量",
+                "red" if selected["npu_max"] >= 95 else "green",
+            ),
+            (
+                "HBM 余量",
+                f"{selected['hbm_headroom_pct']:.1f}%",
+                "表示模型占用后还剩多少显存空间。",
+                f"显存最低只剩 {selected['hbm_headroom_pct']:.1f}%",
+                "显存接近用完" if selected["hbm_headroom_pct"] <= 5 else "显存余量需关注" if selected["hbm_headroom_pct"] <= 10 else "显存余量充足",
+                "red" if selected["hbm_headroom_pct"] <= 5 else "orange" if selected["hbm_headroom_pct"] <= 10 else "green",
+            ),
+            (
+                "忙时并发",
+                f"{int(selected['running_max_busy'])}",
+                "表示高峰时模型同时处理多少个请求。",
+                f"高峰时同时处理 {int(selected['running_max_busy'])} 个请求",
+                "已达到实例上限" if selected["concurrency_ratio"] >= 1 else "接近实例上限" if selected["concurrency_ratio"] >= 0.8 else "并发仍有空间",
+                "red" if selected["concurrency_ratio"] >= 1 else "orange" if selected["concurrency_ratio"] >= 0.8 else "green",
+            ),
+            (
+                "等待队列",
+                f"{int(selected['waiting_max_busy'])}",
+                "表示高峰时有多少请求还没开始处理。",
+                "当前还没有请求排队" if selected["waiting_max_busy"] == 0 else f"最多有 {int(selected['waiting_max_busy'])} 个请求等待处理",
+                "暂未产生排队" if selected["waiting_max_busy"] == 0 else "已出现排队",
+                "green" if selected["waiting_max_busy"] == 0 else "red",
+            ),
+        ]
+        for column, (label, value, tooltip, explanation, status, color) in zip(indicator_columns, indicator_specs, strict=True):
+            with column.container(border=True, key=f"capacity_indicator_{label}"):
+                st.markdown(f"**{label}**", help=tooltip)
+                st.markdown(f"## {value}")
+                st.caption(explanation)
+                _capacity_state_badge(status, color)
+
+    technical_expander = st.expander(
+        "查看技术依据、趋势与实例数据",
+        icon=":material/monitoring:",
+        key="capacity_technical_details",
+        on_change="rerun",
+    )
+    if not technical_expander.open:
+        return
+    with technical_expander:
+        st.caption(
+            "以下内容供技术人员排障。NPU 表示算力使用率；HBM 表示显存；"
+            "忙时并发表示高峰同时处理的请求数；等待队列表示尚未开始处理的请求。"
+        )
+        metric_label = st.segmented_control(
+            "资源趋势指标",
+            ["运行并发", "等待队列", "首字延迟", "服务吞吐"],
+            default="运行并发",
+            required=True,
+            key="resource_metric_decision",
+        )
+        metric_specs = {
+            "运行并发": ("running", "同时处理的请求数", "同时处理的请求越多，越接近实例承载上限。"),
+            "等待队列": ("waiting", "等待处理的请求数", "大于 0 表示请求已经开始排队。"),
+            "首字延迟": ("ttft_ms", "开始返回内容的等待时间（ms）", "越低越好；突然升高可能意味着处理压力增大。"),
+            "服务吞吐": ("tokens_per_second", "每秒输出 Token", "表示模型生成内容的速度。"),
+        }
+        metric_column, axis_title, metric_help = metric_specs[str(metric_label)]
+        chart_data = model_series[
+            pd.to_datetime(model_series["timestamp"]).between(
+                capacity_window_start,
+                latest_date + pd.Timedelta(days=1),
+                inclusive="left",
+            )
+        ].dropna(subset=[metric_column]).copy()
+        trend_col, heatmap_col = st.columns([1.25, 1], gap="large", vertical_alignment="top")
+        with trend_col:
+            st.markdown("#### 容量趋势")
+            st.caption(metric_help)
+            if chart_data.empty:
+                st.info("当前指标没有可用趋势数据。", icon=":material/info:")
+            else:
+                chart = (
+                    alt.Chart(chart_data)
+                    .mark_line(interpolate="step-after", strokeWidth=2)
+                    .encode(
+                        x=alt.X("timestamp:T", title="时间"),
+                        y=alt.Y(f"{metric_column}:Q", title=axis_title),
+                        color=alt.Color("model_id:N", title="模型"),
+                        tooltip=[
+                            alt.Tooltip("timestamp:T", title="时间", format="%Y-%m-%d %H:%M"),
+                            alt.Tooltip("model_id:N", title="模型"),
+                            alt.Tooltip(f"{metric_column}:Q", title=str(metric_label), format=",.2f"),
+                        ],
+                    )
+                    .properties(height=330)
+                )
+                st.altair_chart(chart, width="stretch")
+        with heatmap_col:
+            st.markdown("#### 实例负载")
+            st.caption(f"显示 {selected_model} 各匿名实例的算力峰值；颜色越深表示负载越高。")
+            heatmap_data = instance_hourly[
+                instance_hourly["model_id"].eq(selected_model)
+                & pd.to_datetime(instance_hourly["hour"]).between(
+                    capacity_window_start,
+                    latest_date + pd.Timedelta(days=1),
+                    inclusive="left",
+                )
+            ].copy()
+            heatmap = (
+                alt.Chart(heatmap_data)
+                .mark_rect()
+                .encode(
+                    x=alt.X("hour:T", title="小时"),
+                    y=alt.Y("instance_id:N", title="匿名实例"),
+                    color=alt.Color("npu_max:Q", title="NPU 峰值（%）", scale=alt.Scale(domain=[0, 100], scheme="yelloworangered")),
+                    tooltip=[
+                        alt.Tooltip("hour:T", title="时间", format="%Y-%m-%d %H:%M"),
+                        alt.Tooltip("instance_id:N", title="匿名实例"),
+                        alt.Tooltip("npu_mean:Q", title="平均算力使用率", format=".1f"),
+                        alt.Tooltip("npu_max:Q", title="算力峰值", format=".1f"),
+                    ],
+                )
+                .properties(height=330)
+            )
+            st.altair_chart(heatmap, width="stretch")
+
+        st.markdown("#### 完整技术字段")
+        st.dataframe(
+            latest.drop(columns="_priority").sort_values(["capacity_state", "model_id"]),
+            column_order=[
+                "model_id", "capacity_state", "instance_count", "running_max_busy",
+                "waiting_max_busy", "concurrency_ratio", "ttft_mean_ms",
+                "tokens_per_second_mean", "npu_mean", "npu_p95", "npu_max",
+                "cache_pct", "hbm_pct", "hbm_headroom_pct", "diagnosis",
+            ],
+            column_config={
+                "model_id": "模型",
+                "capacity_state": "原始容量状态",
+                "instance_count": "实例数",
+                "running_max_busy": "忙时并发",
+                "waiting_max_busy": "最大等待",
+                "concurrency_ratio": st.column_config.ProgressColumn("并发/实例", min_value=0, max_value=1, format="%.1f"),
+                "ttft_mean_ms": st.column_config.NumberColumn("平均首字延迟", format="%,.0f ms"),
+                "tokens_per_second_mean": st.column_config.NumberColumn("服务吞吐", format="%.2f token/s"),
+                "npu_mean": st.column_config.NumberColumn("平均 NPU", format="%.1f%%"),
+                "npu_p95": st.column_config.NumberColumn("NPU P95", format="%.1f%%"),
+                "npu_max": st.column_config.NumberColumn("NPU 峰值", format="%.0f%%"),
+                "cache_pct": st.column_config.NumberColumn("Cache", format="%.2f%%"),
+                "hbm_pct": st.column_config.NumberColumn("HBM", format="%.2f%%"),
+                "hbm_headroom_pct": st.column_config.NumberColumn("HBM 余量", format="%.2f%%"),
+                "diagnosis": "原始技术结论",
+            },
+            hide_index=True,
+            height=260,
+        )
+        st.download_button(
+            "下载容量诊断原始数据",
+            latest.drop(columns="_priority").to_csv(index=False).encode("utf-8-sig"),
             f"capacity_diagnosis_{latest_date:%Y%m%d}.csv",
             "text/csv",
             icon=":material/download:",

@@ -44,6 +44,7 @@ def build_rebuild_steps(seed: int, python_executable: str = sys.executable) -> t
         python_step("生成基础模拟调用日志", "src/generate_sample_data.py", "--seed", str(seed)),
         python_step("计算基础监控指标", "src/calculate_metrics.py"),
         python_step("生成校准模拟日志与异常真值", "src/generate_synthetic_v2.py", "--days", "90", "--seed", str(seed + 1)),
+        python_step("生成校准容量历史", "-m", "src.resource_capacity", "--generate-history", "--history-days", "90", "--seed", str(seed + 4)),
         python_step("构建分钟级特征", "src/build_features.py"),
         python_step("运行复合异常规则", "src/composite_rule_engine.py"),
         python_step("评估异常检测模型", "src/model_benchmark.py"),
@@ -67,8 +68,9 @@ def rebuild_demo_data(
 ) -> int:
     """Regenerate synthetic inputs and all of their derived dashboard artifacts.
 
-    Real-source resource files and ``newdata`` are deliberately not part of this
-    pipeline. The returned seed makes a generated dataset reproducible.
+    The latest real-source resource day and ``newdata`` are never overwritten.
+    Only the preceding calibrated synthetic capacity history is regenerated.
+    The returned seed makes a generated dataset reproducible.
     """
 
     selected_seed = seed if seed is not None else create_seed()

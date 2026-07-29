@@ -1,7 +1,7 @@
 """基于真实调用数据生成模型运营评分与健康排行。
 
 原始调用日志负责准确计算调用量、Token、成本、成功率和延迟分位数；
-小时模型特征负责计算日内延迟与成功率波动。所有评分目标和权重均来自
+调用量自适应时间桶负责计算日内延迟与成功率波动。所有评分目标和权重均来自
 指标字典的 ``Scoring Policy``，本模块只实现可复用的数据聚合与评分流程。
 """
 
@@ -56,6 +56,8 @@ HOURLY_REQUIRED_COLUMNS = {
     "success_rate",
     "p95_latency_ms",
 }
+STABILITY_HOURLY_MIN_REQUESTS = 240
+STABILITY_THREE_HOUR_MIN_REQUESTS = 80
 
 
 def load_inputs(
@@ -124,20 +126,64 @@ def build_daily_operating_metrics(
     hourly = hourly_features.copy()
     hourly["hour"] = pd.to_datetime(hourly["hour"])
     hourly["date"] = hourly["hour"].dt.floor("D")
-    stability = (
+    observed_hours = (
         hourly.groupby(["date", "model_id"], as_index=False)
-        .agg(
-            observed_hours=("hour", "nunique"),
-            p95_latency_mean_ms=("p95_latency_ms", "mean"),
-            p95_latency_std_ms=("p95_latency_ms", lambda values: values.std(ddof=0)),
-            success_rate_std_pct=("success_rate", lambda values: values.std(ddof=0)),
+        .agg(observed_hours=("hour", "nunique"))
+    )
+
+    # 低流量模型的小时成功率和小时P95会被单次请求显著放大。根据日调用量
+    # 自动合并为1/3/6小时统计桶，使每个桶尽量包含约10次以上请求，同时
+    # 保留高流量模型对短时异常的小时级敏感度。
+    stability_data = data.merge(
+        daily[["date", "model_id", "request_count"]],
+        on=["date", "model_id"],
+        how="left",
+        validate="many_to_one",
+    )
+    stability_data["stability_bucket_hours"] = np.select(
+        [
+            stability_data["request_count"].ge(STABILITY_HOURLY_MIN_REQUESTS),
+            stability_data["request_count"].ge(STABILITY_THREE_HOUR_MIN_REQUESTS),
+        ],
+        [1, 3],
+        default=6,
+    ).astype(int)
+    bucket_hour = (
+        stability_data["timestamp"].dt.hour
+        // stability_data["stability_bucket_hours"]
+        * stability_data["stability_bucket_hours"]
+    )
+    stability_data["stability_bucket"] = (
+        stability_data["date"] + pd.to_timedelta(bucket_hour, unit="h")
+    )
+    bucket_metrics = (
+        stability_data.groupby(
+            ["date", "model_id", "stability_bucket_hours", "stability_bucket"],
+            as_index=False,
         )
+        .agg(
+            bucket_request_count=("request_id", "count"),
+            bucket_p95_latency_ms=("latency_ms", lambda values: values.quantile(0.95)),
+            bucket_success_rate=("is_success", lambda values: values.mean() * 100),
+        )
+    )
+    stability = (
+        bucket_metrics.groupby(
+            ["date", "model_id", "stability_bucket_hours"], as_index=False
+        )
+        .agg(
+            stability_bucket_count=("stability_bucket", "nunique"),
+            p95_latency_mean_ms=("bucket_p95_latency_ms", "mean"),
+            p95_latency_std_ms=("bucket_p95_latency_ms", lambda values: values.std(ddof=0)),
+            success_rate_std_pct=("bucket_success_rate", lambda values: values.std(ddof=0)),
+        )
+        .merge(observed_hours, on=["date", "model_id"], how="left", validate="one_to_one")
     )
     stability["latency_cv"] = (
         stability["p95_latency_std_ms"]
         / stability["p95_latency_mean_ms"].replace(0, np.nan)
     )
-    insufficient_hours = stability["observed_hours"].lt(2)
+    insufficient_hours = stability["stability_bucket_count"].lt(2)
     stability.loc[
         insufficient_hours, ["latency_cv", "success_rate_std_pct"]
     ] = np.nan
@@ -283,7 +329,8 @@ def build_latest_snapshot(scored: pd.DataFrame) -> pd.DataFrame:
         "request_count", "total_tokens", "estimated_cost", "success_rate",
         "p50_latency_ms", "p95_latency_ms", "p99_latency_ms", "latency_cv",
         "cost_per_request", "cost_per_1k_tokens", "cost_trend_ratio",
-        "cost_baseline_ready", "observed_hours",
+        "cost_baseline_ready", "observed_hours", "stability_bucket_hours",
+        "stability_bucket_count",
     ]
     columns = [column for column in preferred if column in latest.columns]
     return latest[columns].sort_values(["health_rank", "model_id"]).reset_index(drop=True)
@@ -310,8 +357,20 @@ def _require_columns(frame: pd.DataFrame, required: set[str], label: str) -> Non
 
 def _round_numeric(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
+    high_precision_cost_columns = [
+        column
+        for column in (
+            "cost_per_request",
+            "cost_per_request_baseline",
+            "cost_baseline_per_request",
+        )
+        if column in result.columns
+    ]
     numeric = result.select_dtypes(include="number").columns
-    result[numeric] = result[numeric].round(4)
+    standard_precision_columns = numeric.difference(high_precision_cost_columns)
+    result[standard_precision_columns] = result[standard_precision_columns].round(4)
+    # 单请求成本通常低于 0.01 元，必须在原值上直接保留六位小数。
+    result[high_precision_cost_columns] = result[high_precision_cost_columns].round(6)
     return result
 
 

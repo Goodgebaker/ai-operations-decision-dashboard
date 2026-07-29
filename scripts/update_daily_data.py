@@ -35,6 +35,7 @@ def main() -> None:
     python = sys.executable
     if not args.skip_import:
         _run([python, "-m", "src.resource_capacity"])
+    _run([python, "-m", "src.resource_capacity", "--generate-history", "--history-days", "90"])
     start = _simulation_start()
     commands = [
         [python, "src/generate_sample_data.py"],

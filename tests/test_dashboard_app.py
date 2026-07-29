@@ -65,6 +65,7 @@ class DashboardSmokeTests(unittest.TestCase):
                     self.assertNotIn("可信度评分", metric_labels)
                     self.assertNotIn("评分依据", [item.label for item in app.expander])
                     self.assertIn("查看标准化测试明细", [item.label for item in app.expander])
+                    self.assertIn("查看完整能力数据", [item.label for item in app.expander])
                     self.assertIn("查看完整模型画像", [item.label for item in app.expander])
                     self.assertIn(
                         "查看原始诊断证据与完整数据",
@@ -110,11 +111,29 @@ class DashboardSmokeTests(unittest.TestCase):
                         [item.label for item in app.get("download_button")],
                     )
                 if module == "容量诊断":
-                    self.assertIn("资源趋势指标", [item.label for item in app.segmented_control])
-                    self.assertIn(
-                        "查看完整容量与资源明细",
-                        [item.label for item in app.expander],
+                    metric_labels = [item.label for item in app.metric]
+                    self.assertIn("高风险模型", metric_labels)
+                    self.assertIn("接近容量上限", metric_labels)
+                    self.assertIn("当前受影响请求", metric_labels)
+                    markdown_values = [item.value for item in app.markdown]
+                    self.assertIn("### 模型处理清单", markdown_values)
+                    self.assertIn("### 选中模型详情", markdown_values)
+                    self.assertTrue(any("当前业务影响" in value for value in markdown_values))
+                    self.assertTrue(any("建议操作" in value for value in markdown_values))
+                    button_groups = list(app.get("button_group"))
+                    risk_detail = next(
+                        item for item in button_groups if item.label == "风险详情"
                     )
+                    self.assertEqual(["处理建议", "高负载实例"], risk_detail.options)
+                    self.assertTrue(
+                        any("涉及：DeepSeek-V4" in item.value for item in app.caption)
+                    )
+                    self.assertIn("查看模型", [item.label for item in app.selectbox])
+                    for indicator in ("NPU 峰值", "HBM 余量", "忙时并发", "等待队列"):
+                        self.assertIn(f"**{indicator}**", markdown_values)
+                    app.session_state["capacity_technical_details"] = True
+                    app.run()
+                    self.assertEqual([], list(app.exception))
                     self.assertIn(
                         "下载容量诊断原始数据",
                         [item.label for item in app.get("download_button")],
@@ -132,6 +151,37 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertEqual(5, len([label for label in labels if label in {
             "运营总览", "性能诊断", "成本分析", "能力校准", "容量诊断"
         }]))
+
+    def test_peer_comparisons_use_the_same_window_for_every_model(self) -> None:
+        app = AppTest.from_file(
+            str(PROJECT_ROOT / "dashboard" / "app.py"),
+            default_timeout=30,
+        ).run()
+
+        for module, selector_label in (
+            ("性能诊断", "诊断模型"),
+            ("成本分析", "成本分析模型"),
+        ):
+            next(button for button in app.sidebar.button if button.label == module).click().run()
+            time_range = next(
+                item for item in app.segmented_control if item.label == "时间范围"
+            )
+            time_range.set_value("过去 7 天").run()
+            comparisons: list[str] = []
+            selector = next(item for item in app.selectbox if item.label == selector_label)
+            for model in selector.options:
+                selector = next(item for item in app.selectbox if item.label == selector_label)
+                selector.set_value(model).run()
+                comparisons.append(
+                    next(
+                        item.value
+                        for item in app.caption
+                        if "同窗口模型平均" in item.value
+                    )
+                )
+
+            self.assertTrue(any(text.startswith("高于") for text in comparisons))
+            self.assertTrue(any(text.startswith("低于") for text in comparisons))
 
     def test_overview_exposes_simplified_decision_context(self) -> None:
         app = AppTest.from_file(
@@ -217,6 +267,28 @@ class DashboardSmokeTests(unittest.TestCase):
             "#### 与 Minimax-M2.5 对比",
             [item.value for item in app.markdown],
         )
+
+    def test_capacity_action_selects_the_requested_model(self) -> None:
+        app = AppTest.from_file(
+            str(PROJECT_ROOT / "dashboard" / "app.py"),
+            default_timeout=30,
+        ).run()
+        next(
+            button for button in app.sidebar.button if button.label == "容量诊断"
+        ).click().run()
+
+        self.assertEqual("DeepSeek-V4", app.selectbox[0].value)
+        next(
+            button
+            for button in app.button
+            if button.key == "capacity_select_Qwen3.6-35B-A3B"
+        ).click().run()
+
+        self.assertEqual([], list(app.exception))
+        self.assertEqual("Qwen3.6-35B-A3B", app.selectbox[0].value)
+        button_groups = list(app.get("button_group"))
+        time_range = next(item for item in button_groups if item.label == "趋势时间范围")
+        self.assertEqual(["过去 7 天", "过去 30 天", "过去 90 天"], time_range.options)
 
 
 if __name__ == "__main__":
