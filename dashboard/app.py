@@ -47,6 +47,13 @@ from src.interactive_risk_policy import (
 )
 from src.model_health_risk import RiskPolicy, build_diagnostic_evidence, build_health_risks
 from src.model_scoring import load_scoring_policy
+from dashboard.decision_center import (
+    render_capacity as render_decision_capacity,
+    render_cost as render_decision_cost,
+    render_model_profile as render_decision_model_profile,
+    render_overview as render_decision_overview,
+    render_performance as render_decision_performance,
+)
 
 PATHS = {
     "logs": PROJECT_ROOT / "data" / "synthetic_logs_v2.csv",
@@ -83,7 +90,7 @@ MODULES = [
     "运营总览",
     "性能诊断",
     "成本分析",
-    "能力校准",
+    "模型画像与路由适配",
     "容量诊断",
 ]
 
@@ -91,7 +98,7 @@ MODULE_NAVIGATION = [
     ("运营总览", ":material/space_dashboard:", "nav_overview"),
     ("性能诊断", ":material/speed:", "nav_performance"),
     ("成本分析", ":material/paid:", "nav_cost"),
-    ("能力校准", ":material/model_training:", "nav_calibration"),
+    ("模型画像与路由适配", ":material/route:", "nav_calibration"),
     ("容量诊断", ":material/memory:", "nav_capacity"),
 ]
 
@@ -3172,25 +3179,15 @@ def main() -> None:
     )
 
     if module == "运营总览":
-        render_overview(
-            logs,
-            operating,
-            profiles,
-            _date_filter(data["operating"], "date", start, end),
-            data["profiles"],
-        )
+        render_decision_overview(logs, operating)
     elif module == "性能诊断":
-        render_performance(operating)
+        render_decision_performance(operating)
     elif module == "成本分析":
-        render_cost(operating)
-    elif module == "能力校准":
-        render_calibration(profiles, capability, diagnosis, probe_runs, probe_events)
+        render_decision_cost(operating)
+    elif module == "模型画像与路由适配":
+        render_decision_model_profile(data["external_benchmarks"], capability)
     elif module == "容量诊断":
-        render_resource_capacity(
-            resource_model,
-            resource_instances,
-            resource_capacity,
-        )
+        render_decision_capacity(resource_capacity)
     elif module == "智能检测":
         render_detection(
             risks,
